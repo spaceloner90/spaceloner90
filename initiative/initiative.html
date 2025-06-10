@@ -234,9 +234,92 @@
             'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500', 'bg-sky-500', 'bg-blue-500', 'bg-indigo-500',
             'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500', 'bg-rose-500', 'bg-slate-500'
         ];
-        let colorIndex = 0;
+        let colorIndex = 0; // To cycle through colors for new characters
         
         const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
+
+        // --- Cookie Functions for Persistence ---
+        function setCookie(name, value, days) {
+            let expires = "";
+            if (days) {
+                const date = new Date();
+                date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+                expires = "; expires=" + date.toUTCString();
+            }
+            document.cookie = name + "=" + (value || "")  + expires + "; path=/";
+        }
+
+        function getCookie(name) {
+            const nameEQ = name + "=";
+            const ca = document.cookie.split(';');
+            for(let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+                if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+            }
+            return null;
+        }
+
+        function saveStateToCookie() {
+            const state = [];
+            Array.from(shelf.children).forEach(item => {
+                if (item.classList.contains('bg-black')) { // It's the turn marker
+                    state.push({ type: 'turnMarker' });
+                } else { // It's a character card
+                    const nameSpan = item.querySelector('.font-bold.text-lg');
+                    const hpSpan = item.querySelector('.text-2xl.font-mono');
+                    const statusContainer = item.querySelector('.status-container');
+
+                    const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
+                    const bgColorClass = Array.from(item.classList).find(cls => colorPalette.includes(cls));
+                    
+                    state.push({
+                        type: 'character',
+                        name: nameSpan ? nameSpan.textContent.trim() : '',
+                        hp: hpSpan ? hpSpan.textContent.trim() : '',
+                        statuses: statuses,
+                        bgColor: bgColorClass || '',
+                        bgImage: item.style.backgroundImage || ''
+                    });
+                }
+            });
+            setCookie('initiativeTrackerState', JSON.stringify(state), 365); // Save for 1 year
+            console.log('State saved to cookie.');
+        }
+
+        function loadStateFromCookie() {
+            const savedState = getCookie('initiativeTrackerState');
+            if (savedState) {
+                try {
+                    const state = JSON.parse(savedState);
+                    shelf.innerHTML = ''; // Clear existing elements
+
+                    state.forEach(itemData => {
+                        if (itemData.type === 'turnMarker') {
+                            createTurnMarker();
+                        } else if (itemData.type === 'character') {
+                            createCharacter(
+                                itemData.name, 
+                                itemData.hp, 
+                                itemData.statuses, 
+                                { 
+                                    backgroundColorClass: itemData.bgColor, 
+                                    backgroundImage: itemData.bgImage 
+                                }
+                            );
+                        }
+                    });
+                    console.log('State loaded from cookie.');
+                    updateActionButtonsState(); // Update button states after loading
+                    return true;
+                } catch (e) {
+                    console.error("Error parsing saved state from cookie:", e);
+                    return false;
+                }
+            }
+            return false;
+        }
+
 
         // --- Core Functions for Item States ---
 
@@ -278,11 +361,15 @@
                 }
                 setTimeout(() => item.classList.add('dragging'), 0)
             });
-            item.addEventListener('dragend', () => item.classList.remove('dragging'));
+            item.addEventListener('dragend', () => {
+                item.classList.remove('dragging');
+                saveStateToCookie(); // Save state after drag and drop
+            });
         }
 
         function initializeSelectable(item) {
-            if (item.querySelectorAll('span').length === 0) return;
+            // Only make character cards selectable, not the turn marker
+            if (item.classList.contains('bg-black')) return;
 
             item.addEventListener('click', (event) => {
                 const isClickOnIcon = event.target.tagName === 'SPAN' && event.target.parentElement.classList.contains('status-container');
@@ -294,7 +381,11 @@
                     const isAlreadySelected = item.classList.contains('highlighted');
                     const selectedCount = document.querySelectorAll('.highlighted').length;
 
-                    if (isAlreadySelected && selectedCount > 1) return;
+                    if (isAlreadySelected && selectedCount > 1) {
+                         // If already selected and multiple items are selected, don't deselect others
+                         // This allows for individual interaction without losing group selection immediately
+                         return;
+                    }
                     
                     document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
                     if (!isAlreadySelected) item.classList.add('highlighted');
@@ -315,16 +406,34 @@
 
                 let newHp;
                 try {
-                    const validExpressionRegex = /^[0-9+\-\s]+$/;
-                    if (!validExpressionRegex.test(expression)) throw new Error("Invalid characters");
-                    const numbers = expression.match(/[+\-]?\s*\d+/g);
-                    if (!numbers) throw new Error("No numbers found");
-                    newHp = numbers.reduce((total, numStr) => total + parseInt(numStr.replace(/\s/g, '')), 0);
+                    // Allow simple arithmetic operations like +5, -2, or just a number
+                    // Ensure the expression only contains numbers, +, -, and spaces
+                    const sanitizedExpression = expression.replace(/\s/g, ''); // Remove all spaces
+                    const validExpressionRegex = /^[0-9+\-]+$/; // Regex to validate only numbers, +, -
+                    
+                    if (!validExpressionRegex.test(sanitizedExpression) && !/^\d+$/.test(sanitizedExpression)) {
+                         // If it's not a valid arithmetic expression or just a number, revert
+                         throw new Error("Invalid characters or format");
+                    }
+
+                    // Check if it's an arithmetic operation
+                    if (sanitizedExpression.includes('+') || sanitizedExpression.includes('-')) {
+                        // Evaluate the arithmetic expression relative to original HP
+                        // Use a safe way to evaluate, avoiding `eval` for security
+                        const parts = sanitizedExpression.match(/([+\-]?\d+)/g);
+                        if (!parts) throw new Error("No numbers found in arithmetic expression");
+                        newHp = originalHp + parts.reduce((acc, part) => acc + parseInt(part), 0);
+                    } else {
+                        // If it's just a number, parse it directly
+                        newHp = parseInt(sanitizedExpression, 10);
+                    }
+
                 } catch (error) {
                     console.error("HP calculation error:", error);
-                    newHp = originalHp;
+                    newHp = originalHp; // Revert to original HP on error
                 }
                 hpSpan.textContent = newHp;
+                saveStateToCookie(); // Save state after HP change
             };
             
             hpSpan.addEventListener('blur', resolveHp);
@@ -332,12 +441,24 @@
                 if (e.key === 'Enter') { e.preventDefault(); resolveHp(); hpSpan.blur(); } 
                 else if (e.key === 'Escape') { hpSpan.textContent = hpSpan.dataset.originalHp; hpSpan.blur(); }
             });
+
+            // Handle name changes separately
+            const nameSpan = hpSpan.parentElement.previousElementSibling; // Assuming HP span is under HP label, and name is sibling to HP div
+            if (nameSpan && nameSpan.getAttribute('contenteditable') === 'true') {
+                 nameSpan.addEventListener('blur', saveStateToCookie);
+                 nameSpan.addEventListener('keydown', (e) => {
+                     if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
+                 });
+            }
         }
         
         function initializeContextMenu(item) {
             item.addEventListener('contextmenu', e => {
                 e.preventDefault();
                 
+                // If the item is the turn marker, don't show context menu
+                if (item.classList.contains('bg-black')) return;
+
                 if (!item.classList.contains('highlighted')) {
                     document.querySelectorAll('.highlighted').forEach(el => el.classList.remove('highlighted'));
                     item.classList.add('highlighted');
@@ -351,11 +472,12 @@
         }
 
 
-        document.querySelectorAll('.draggable').forEach(item => {
-            initializeDraggable(item);
-            initializeSelectable(item);
-            initializeContextMenu(item);
-        });
+        // No longer query all .draggable on load, as they are created dynamically
+        // document.querySelectorAll('.draggable').forEach(item => {
+        //     initializeDraggable(item);
+        //     initializeSelectable(item);
+        //     initializeContextMenu(item);
+        // });
 
         // --- Drag & Drop Logic ---
         shelf.addEventListener('dragover', e => {
@@ -406,6 +528,7 @@
 
             const newItem = document.createElement('div');
             
+            // Assign a color from the palette, or use the one provided for loading
             const newColor = backgroundColorClass || colorPalette[colorIndex++ % colorPalette.length];
             newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
             
@@ -431,13 +554,16 @@
                  const statusIcon = document.createElement('span');
                  statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer text-readable";
                  statusIcon.textContent = symbol;
-                 statusIcon.addEventListener('click', () => statusIcon.remove());
+                 statusIcon.addEventListener('click', () => {
+                     statusIcon.remove();
+                     saveStateToCookie(); // Save state when a status is removed directly
+                 });
                  statusContainer.appendChild(statusIcon);
             });
             
             initializeHpField(newItem.querySelector('.text-2xl.font-mono'));
             initializeDraggable(newItem);
-            initializeSelectable(newItem);
+            initializeSelectable(newItem); // Character cards are selectable
             initializeContextMenu(newItem);
             
             if(insertionElement) insertionElement.after(newItem);
@@ -445,12 +571,14 @@
 
             newItem.classList.add('pop-in-animation');
             newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
+            saveStateToCookie(); // Save state after a new character is created
         }
         
         function createTurnMarker() {
             const turnMarker = document.createElement('div');
             turnMarker.className = 'draggable bg-black rounded-full w-2 h-56 shadow-lg self-center';
             initializeDraggable(turnMarker);
+            // Turn marker is not selectable or does not have context menu
             shelf.appendChild(turnMarker);
         }
 
@@ -471,24 +599,31 @@
                 symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${(statusSymbols.indexOf(symbol) + 1) % 10}</span>`;
                 
                 symbolButton.addEventListener('click', () => {
+                    // Check if all selected items already have this status
                     if (allHaveStatus) {
+                        // If all have it, remove it from all selected items
                         selectedItems.forEach(item => {
                             item.querySelectorAll('.status-container span').forEach(icon => {
                                 if (icon.textContent === symbol) icon.remove();
                             });
                         });
                     } else {
+                        // If not all have it, add it to those that don't
                         selectedItems.forEach(item => {
                             if (!Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent).includes(symbol)) {
                                 const statusIcon = document.createElement('span');
                                 statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer text-readable";
                                 statusIcon.textContent = symbol;
-                                statusIcon.addEventListener('click', () => statusIcon.remove());
+                                statusIcon.addEventListener('click', () => {
+                                    statusIcon.remove();
+                                    saveStateToCookie(); // Save state when a status is removed directly
+                                });
                                 item.querySelector('.status-container').appendChild(statusIcon);
                             }
                         });
                     }
-                    populateSymbolModal(selectedItems);
+                    populateSymbolModal(selectedItems); // Re-populate to update selection visual
+                    saveStateToCookie(); // Save state after status changes
                 });
                 symbolGrid.appendChild(symbolButton);
             });
@@ -508,6 +643,7 @@
                         item.classList.add(color);
                     });
                     contextMenu.classList.add('hidden');
+                    saveStateToCookie(); // Save state after color change
                 });
                 colorGrid.appendChild(swatch);
             });
@@ -538,11 +674,14 @@
             const url = imageUrlInput.value.trim();
             if (url) {
                 document.querySelectorAll('.highlighted').forEach(item => {
+                    // Remove existing color classes when applying an image
+                    item.classList.remove(...colorPalette); 
                     item.style.backgroundImage = `url('${url}')`;
                 });
             }
             contextMenu.classList.add('hidden');
             imageUrlInput.value = '';
+            saveStateToCookie(); // Save state after image URL change
         });
 
         imageFileInput.addEventListener('change', (e) => {
@@ -552,8 +691,11 @@
                 reader.onload = (event) => {
                     const imageUrl = event.target.result;
                     document.querySelectorAll('.highlighted').forEach(item => {
+                        // Remove existing color classes when applying an image
+                        item.classList.remove(...colorPalette);
                         item.style.backgroundImage = `url('${imageUrl}')`;
                     });
+                    saveStateToCookie(); // Save state after image file change
                 };
                 reader.readAsDataURL(file);
             }
@@ -564,19 +706,26 @@
         // --- Button & Keyboard Logic ---
         lastTurnButton.addEventListener('click', () => {
             const lastItem = shelf.querySelector('.draggable:last-child');
-            if(lastItem) shelf.insertBefore(lastItem, shelf.firstChild);
+            if(lastItem) {
+                shelf.insertBefore(lastItem, shelf.firstChild);
+                saveStateToCookie(); // Save state after turn change
+            }
         });
 
         moveButton.addEventListener('click', () => {
             const firstItem = shelf.querySelector('.draggable');
-            if(firstItem) shelf.appendChild(firstItem);
+            if(firstItem) {
+                shelf.appendChild(firstItem);
+                saveStateToCookie(); // Save state after turn change
+            }
         });
 
-        addButton.addEventListener('click', () => createCharacter('', 10));
+        addButton.addEventListener('click', () => createCharacter('', 10)); // createCharacter already calls saveStateToCookie()
 
         removeButton.addEventListener('click', () => {
             document.querySelectorAll('.highlighted').forEach(item => item.remove());
             updateActionButtonsState();
+            saveStateToCookie(); // Save state after removal
         });
 
         copyButton.addEventListener('click', () => {
@@ -623,7 +772,7 @@
                         backgroundImage,
                         backgroundColorClass
                     };
-                    createCharacter(newName, hp, statuses, options);
+                    createCharacter(newName, hp, statuses, options); // createCharacter already calls saveStateToCookie()
                     lastOriginal = insertionPoint.nextElementSibling; // The new insertion point is the card we just created
                 });
             }
@@ -634,12 +783,21 @@
                  const statusContainer = item.querySelector('.status-container');
                  if(statusContainer) statusContainer.innerHTML = '';
              });
+             saveStateToCookie(); // Save state after clearing statuses
         });
 
         let isSelecting = false;
         let startX, startY;
         shelf.addEventListener('mousedown', (e) => {
-            if (e.target !== shelf) return;
+            // Do not start selection if clicking on an already highlighted character or the black bar
+            if (e.target.closest('.draggable.highlighted') || e.target.classList.contains('bg-black')) return; 
+
+            // Allow clicking on existing non-highlighted characters to select them
+            if (e.target.closest('.draggable')) {
+                // If it's a character, let the regular click event handle selection
+                return;
+            }
+
             e.preventDefault();
             isSelecting = true;
             startX = e.clientX; startY = e.clientY;
@@ -658,7 +816,9 @@
             Object.assign(selectionBox.style, { width: `${width}px`, height: `${height}px`, left: `${left}px`, top: `${top}px` });
             const boxRect = selectionBox.getBoundingClientRect();
             document.querySelectorAll('.draggable').forEach(item => {
-                if (item.querySelectorAll('span').length === 0) return;
+                // Do not include the turn marker in drag selection
+                if (item.classList.contains('bg-black')) return;
+
                 const itemRect = item.getBoundingClientRect();
                 const isIntersecting = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
                 if (isIntersecting) item.classList.add('highlighted');
@@ -685,10 +845,13 @@
                 return;
             }
 
+            // Prevent shortcuts if an editable field is active
             if (document.activeElement.getAttribute('contenteditable') === 'true') return;
             
+            // Handle number keys for status modal selection
             if (!statusModal.classList.contains('hidden') && event.code.startsWith('Digit')) {
                  event.preventDefault();
+                 // Digit0 maps to 9th status, Digit1 to 0th, etc.
                  const keyNumber = event.code === 'Digit0' ? 9 : parseInt(event.code.slice(-1)) - 1;
                  const symbolButtons = symbolGrid.querySelectorAll('button');
                  if (symbolButtons[keyNumber]) symbolButtons[keyNumber].click();
@@ -707,6 +870,7 @@
         });
         
         window.addEventListener('click', (e) => {
+            // Close context menu if click outside it and not on a draggable item (which has its own context menu handler)
             if (!contextMenu.classList.contains('hidden') && !contextMenu.contains(e.target) && !e.target.closest('.draggable')) {
                 contextMenu.classList.add('hidden');
             }
@@ -723,7 +887,10 @@
         // --- Initial App Start ---
         function initializeApp() {
             populateColorMenu();
-            initializeDefaultScene();
+            // Attempt to load state from cookie, if not found, initialize default scene
+            if (!loadStateFromCookie()) {
+                initializeDefaultScene();
+            }
         }
         
         initializeApp();
