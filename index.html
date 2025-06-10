@@ -14,6 +14,7 @@
 
         body {
             font-family: 'Inter', sans-serif;
+            user-select: none; /* Prevent text selection during drag operations */
         }
         /* Style for the contenteditable fields to give user feedback */
         [contenteditable]:focus {
@@ -23,6 +24,7 @@
         }
         [contenteditable] {
             cursor: text;
+            user-select: text; /* Allow text selection inside editable fields */
         }
         /* CSS to create placeholder text for the name field */
         [data-placeholder]:empty::before {
@@ -89,9 +91,21 @@
             background-color: #dbeafe; /* A light blue background */
             border: 2px solid #60a5fa; /* A slightly darker blue border */
         }
+
+        /* Style for the drag-to-select box */
+        #selection-box {
+            position: absolute;
+            border: 2px solid #60a5fa;
+            background-color: rgba(59, 130, 246, 0.2);
+            pointer-events: none; /* So it doesn't interfere with mouse events */
+            z-index: 9999;
+        }
     </style>
 </head>
 <body class="bg-gray-100">
+
+    <!-- This div is for the drag-to-select feature -->
+    <div id="selection-box" style="display: none;"></div>
 
     <!-- Main container for the scene -->
     <div class="w-full max-w-6xl mx-auto px-4 py-8">
@@ -166,6 +180,7 @@
         const statusModal = document.getElementById('status-modal');
         const closeModalButton = document.getElementById('close-modal-btn');
         const symbolGrid = document.getElementById('symbol-grid');
+        const selectionBox = document.getElementById('selection-box');
 
         // --- Data ---
         const colorPalette = [
@@ -180,10 +195,10 @@
         // --- Core Functions for Item States ---
 
         function updateActionButtonsState() {
-            const selectedItem = document.querySelector('.highlighted');
+            const selectedItems = document.querySelectorAll('.highlighted');
             const buttonsToUpdate = [removeButton, copyButton, addStatusButton, clearStatusesButton];
             
-            if (selectedItem) {
+            if (selectedItems.length > 0) {
                 buttonsToUpdate.forEach(button => {
                     button.disabled = false;
                     button.classList.remove('bg-gray-400', 'cursor-not-allowed', 'opacity-50');
@@ -210,85 +225,66 @@
 
         function initializeDraggable(item) {
             item.setAttribute('draggable', true);
-            item.addEventListener('dragstart', () => setTimeout(() => item.classList.add('dragging'), 0));
+            item.addEventListener('dragstart', () => {
+                if (!item.classList.contains('highlighted')) {
+                    document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
+                    item.classList.add('highlighted');
+                }
+                setTimeout(() => item.classList.add('dragging'), 0)
+            });
             item.addEventListener('dragend', () => item.classList.remove('dragging'));
         }
 
         function initializeSelectable(item) {
-            // Can't select the turn marker bar
             if (item.querySelectorAll('span').length === 0) return;
 
             item.addEventListener('click', (event) => {
                 const isClickOnIcon = event.target.tagName === 'SPAN' && event.target.parentElement.classList.contains('status-container');
+                if (event.target.getAttribute('contenteditable') === 'true' || isClickOnIcon) return;
                 
-                if (event.target.getAttribute('contenteditable') === 'true' || isClickOnIcon) {
-                    return;
-                }
+                if (event.shiftKey) {
+                    item.classList.toggle('highlighted');
+                } else {
+                    const isAlreadySelected = item.classList.contains('highlighted');
+                    const selectedCount = document.querySelectorAll('.highlighted').length;
 
-                const isAlreadySelected = item.classList.contains('highlighted');
-                document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
-                
-                if (!isAlreadySelected) {
-                    item.classList.add('highlighted');
+                    if (isAlreadySelected && selectedCount > 1) return;
+                    
+                    document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
+                    if (!isAlreadySelected) item.classList.add('highlighted');
                 }
-                
                 updateActionButtonsState();
             });
         }
 
         function initializeHpField(hpSpan) {
-            // Store the original value on focus
             hpSpan.addEventListener('focus', () => {
                 hpSpan.dataset.originalHp = hpSpan.textContent.trim();
             });
 
-            // This function resolves the expression
             const resolveHp = () => {
                 const originalHp = parseInt(hpSpan.dataset.originalHp, 10);
                 const expression = hpSpan.textContent.trim();
-
-                if (isNaN(originalHp)) return; // Failsafe
+                if (isNaN(originalHp)) return;
 
                 let newHp;
-                
                 try {
-                    // Use a regex to ensure the expression only contains safe characters.
                     const validExpressionRegex = /^[0-9+\-\s]+$/;
-                    if (!validExpressionRegex.test(expression)) {
-                        throw new Error("Invalid characters in expression");
-                    }
-                    
+                    if (!validExpressionRegex.test(expression)) throw new Error("Invalid characters");
                     const numbers = expression.match(/[+\-]?\s*\d+/g);
-                    
-                    if (!numbers) {
-                        throw new Error("No numbers found in expression");
-                    }
-
-                    const result = numbers.reduce((total, numStr) => {
-                        return total + parseInt(numStr.replace(/\s/g, ''), 10);
-                    }, 0);
-
-                    newHp = result;
-
+                    if (!numbers) throw new Error("No numbers found");
+                    newHp = numbers.reduce((total, numStr) => total + parseInt(numStr.replace(/\s/g, '')), 0);
                 } catch (error) {
                     console.error("HP calculation error:", error);
                     newHp = originalHp;
                 }
-                
                 hpSpan.textContent = newHp;
             };
             
             hpSpan.addEventListener('blur', resolveHp);
-
             hpSpan.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    resolveHp();
-                    hpSpan.blur();
-                } else if (e.key === 'Escape') {
-                    hpSpan.textContent = hpSpan.dataset.originalHp;
-                    hpSpan.blur();
-                }
+                if (e.key === 'Enter') { e.preventDefault(); resolveHp(); hpSpan.blur(); } 
+                else if (e.key === 'Escape') { hpSpan.textContent = hpSpan.dataset.originalHp; hpSpan.blur(); }
             });
         }
         
@@ -297,17 +293,13 @@
             initializeSelectable(item);
         });
 
-        // --- Drag & Drop Logic ---
         shelf.addEventListener('dragover', e => {
             e.preventDefault();
             const draggingItem = document.querySelector('.dragging');
             if (!draggingItem) return;
             const afterElement = getDragAfterElement(shelf, e.clientX);
-            if (afterElement == null) {
-                shelf.appendChild(draggingItem);
-            } else {
-                shelf.insertBefore(draggingItem, afterElement);
-            }
+            if (afterElement == null) shelf.appendChild(draggingItem);
+            else shelf.insertBefore(draggingItem, afterElement);
         });
 
         function getDragAfterElement(container, x) {
@@ -315,21 +307,17 @@
             return draggableElements.reduce((closest, child) => {
                 const box = child.getBoundingClientRect();
                 const offset = x - box.left - box.width / 2;
-                if (offset < 0 && offset > closest.offset) {
-                    return { offset: offset, element: child };
-                } else {
-                    return closest;
-                }
+                if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
+                else return closest;
             }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
 
-        // --- Character Creation ---
-        function createCharacter(name, hp, statuses = []) {
+        function createCharacter(name, hp, statuses = [], insertionElement = null) {
             const newItem = document.createElement('div');
             const newColor = colorPalette[colorIndex++ % colorPalette.length];
             newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
             
-            const nameContent = name ? name : '';
+            const nameContent = name || '';
             const namePlaceholder = name ? '' : 'data-placeholder="Name"';
 
             newItem.innerHTML = `
@@ -340,9 +328,7 @@
                         <span contenteditable="true" class="text-2xl font-mono p-1">${hp}</span>
                     </div>
                 </div>
-                <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2">
-                </div>
-            `;
+                <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2"></div>`;
 
             const statusContainer = newItem.querySelector('.status-container');
             statuses.forEach(symbol => {
@@ -353,67 +339,62 @@
                  statusContainer.appendChild(statusIcon);
             });
             
-            const hpSpan = newItem.querySelector('.text-2xl.font-mono');
-            initializeHpField(hpSpan);
-
+            initializeHpField(newItem.querySelector('.text-2xl.font-mono'));
             initializeDraggable(newItem);
             initializeSelectable(newItem);
             
-            // Add to DOM and then animate
-            shelf.appendChild(newItem);
+            if(insertionElement) insertionElement.after(newItem);
+            else shelf.appendChild(newItem);
+
             newItem.classList.add('pop-in-animation');
-            newItem.addEventListener('animationend', () => {
-                newItem.classList.remove('pop-in-animation');
-            }, { once: true });
+            newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
         }
 
         // --- Modal Logic ---
-        function populateSymbolModal(selectedItem) {
+        function populateSymbolModal(selectedItems) {
             symbolGrid.innerHTML = '';
             
-            // Get currently applied statuses for the selected character
-            const statusContainer = selectedItem.querySelector('.status-container');
-            const appliedIcons = statusContainer.querySelectorAll('span');
-            const appliedStatuses = new Set(Array.from(appliedIcons).map(icon => icon.textContent));
-
             statusSymbols.forEach((symbol, index) => {
                 const symbolButton = document.createElement('button');
                 symbolButton.className = "relative text-3xl p-4 rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500";
                 
-                // Highlight the button if the status is already applied
-                if (appliedStatuses.has(symbol)) {
-                    symbolButton.classList.add('symbol-selected');
-                }
+                const allHaveStatus = selectedItems.length > 0 && Array.from(selectedItems).every(item => {
+                    const appliedStatuses = Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent);
+                    return appliedStatuses.includes(symbol);
+                });
+                
+                if (allHaveStatus) symbolButton.classList.add('symbol-selected');
 
                 const displayNumber = (index + 1) % 10;
-                
-                symbolButton.innerHTML = `
-                    <span class="pointer-events-none">${symbol}</span>
-                    <span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${displayNumber}</span>
-                `;
+                symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${displayNumber}</span>`;
                 
                 symbolButton.addEventListener('click', () => {
-                    symbolButton.classList.toggle('symbol-selected'); // Toggle highlight immediately
-
-                    const existingIcons = statusContainer.querySelectorAll('span');
-                    let existingIcon = null;
-                    existingIcons.forEach(icon => {
-                        if (icon.textContent === symbol) {
-                            existingIcon = icon;
-                        }
-                    });
-
-                    if (existingIcon) {
-                        // If it exists, remove it from the character card
-                        existingIcon.remove();
+                    // Decide action based on state *before* the click
+                    if (allHaveStatus) {
+                        // If all have it, remove from all
+                        selectedItems.forEach(item => {
+                            item.querySelectorAll('.status-container span').forEach(icon => {
+                                if (icon.textContent === symbol) icon.remove();
+                            });
+                        });
+                        symbolButton.classList.remove('symbol-selected');
                     } else {
-                        // If it doesn't exist, add it to the character card
-                        const statusIcon = document.createElement('span');
-                        statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer";
-                        statusIcon.textContent = symbol;
-                        statusIcon.addEventListener('click', () => statusIcon.remove());
-                        statusContainer.appendChild(statusIcon);
+                        // If some/none have it, add to all
+                        selectedItems.forEach(item => {
+                            const appliedStatuses = Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent);
+                            if (!appliedStatuses.includes(symbol)) {
+                                const statusIcon = document.createElement('span');
+                                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer";
+                                statusIcon.textContent = symbol;
+                                statusIcon.addEventListener('click', () => statusIcon.remove());
+                                item.querySelector('.status-container').appendChild(statusIcon);
+                            }
+                        });
+                        // After adding to all, the button should appear selected
+                        symbolButton.classList.add('symbol-selected');
                     }
+                    // Repopulate to correctly reflect the new state for the next click
+                    populateSymbolModal(selectedItems);
                 });
                 symbolGrid.appendChild(symbolButton);
             });
@@ -424,9 +405,9 @@
                 statusModal.classList.add('hidden');
             } else {
                 if (!addStatusButton.disabled) {
-                    const selectedItem = document.querySelector('.highlighted');
-                    if (selectedItem) {
-                        populateSymbolModal(selectedItem); // Repopulate based on current selection
+                    const selectedItems = document.querySelectorAll('.highlighted');
+                    if (selectedItems.length > 0) {
+                        populateSymbolModal(selectedItems);
                         statusModal.classList.remove('hidden');
                     }
                 }
@@ -436,9 +417,7 @@
         addStatusButton.addEventListener('click', handleStatusModalToggle);
         closeModalButton.addEventListener('click', () => statusModal.classList.add('hidden'));
         statusModal.addEventListener('click', (e) => {
-             if (e.target.id === 'status-modal') {
-                  statusModal.classList.add('hidden');
-             }
+             if (e.target.id === 'status-modal') statusModal.classList.add('hidden');
         });
         
         // --- Button & Keyboard Logic ---
@@ -455,147 +434,108 @@
         addButton.addEventListener('click', () => createCharacter('', 10));
 
         removeButton.addEventListener('click', () => {
-            const selectedItem = document.querySelector('.highlighted');
-            if (selectedItem) {
-                selectedItem.remove();
-                updateActionButtonsState();
-            }
+            document.querySelectorAll('.highlighted').forEach(item => item.remove());
+            updateActionButtonsState();
         });
 
         copyButton.addEventListener('click', () => {
-            const original = document.querySelector('.highlighted');
-            if (original) {
-                const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
-                const clone = original.cloneNode(true);
-                clone.classList.remove('highlighted');
-                let insertionPoint = original; // Default insertion point
-
-                if (originalName === '') {
-                    // Case 1: Name is empty. Do nothing to the name. Insert after original.
-                } else {
-                    // Case 2: Name is not empty. Proceed with numbering and sorting logic.
-                    const allNameSpans = document.querySelectorAll('#shelf-items .font-bold.text-lg');
-                    const allNames = Array.from(allNameSpans).map(span => span.textContent.trim());
-                    let newName;
-
-                    const getNextName = (currentName) => {
-                        const match = currentName.match(/(.+) (\d+)$/);
-                        if (match && match[1] && match[2]) {
-                            const baseName = match[1];
-                            const number = parseInt(match[2], 10);
-                            return `${baseName} ${number + 1}`;
-                        } else {
-                            return `${currentName} 2`;
-                        }
-                    };
-
-                    newName = getNextName(originalName);
-                    while (allNames.includes(newName)) {
-                        newName = getNextName(newName);
-                    }
+            const originals = document.querySelectorAll('.highlighted');
+            if (originals.length > 0) {
+                let allNames = new Set(Array.from(document.querySelectorAll('#shelf-items .font-bold.text-lg')).map(span => span.textContent.trim()));
+                originals.forEach(original => {
+                    const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
+                    const hp = original.querySelector('.text-2xl.font-mono').textContent.trim();
+                    const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
+                    let newName = originalName;
                     
-                    clone.querySelector('.font-bold.text-lg').textContent = newName;
-
-                    // Find the correct insertion point
-                    const newNameMatch = newName.match(/(.+) (\d+)$/);
-                    if (newNameMatch) {
-                        const baseName = newNameMatch[1];
-                        const newNumber = parseInt(newNameMatch[2], 10);
-                        let highestFoundNumber = -1;
-                        let elementToInsertAfter = null;
-
-                        allNameSpans.forEach(span => {
-                            const name = span.textContent.trim();
-                            const siblingMatch = name.match(/(.+) (\d+)$/);
-                            if (siblingMatch && siblingMatch[1] === baseName) {
-                                const siblingNumber = parseInt(siblingMatch[2], 10);
-                                if (siblingNumber < newNumber && siblingNumber > highestFoundNumber) {
-                                    highestFoundNumber = siblingNumber;
-                                    elementToInsertAfter = span.closest('.draggable');
-                                }
-                            }
-                        });
-                        
-                        if (elementToInsertAfter) {
-                            insertionPoint = elementToInsertAfter;
-                        }
+                    if (originalName !== '') {
+                        const getNextName = (currentName) => {
+                            const match = currentName.match(/(.+) (\d+)$/);
+                            return match ? `${match[1]} ${parseInt(match[2], 10) + 1}` : `${currentName} 2`;
+                        };
+                        let nextName = getNextName(originalName);
+                        while (allNames.has(nextName)) nextName = getNextName(nextName);
+                        newName = nextName;
+                        allNames.add(newName);
                     }
-                }
-                
-                insertionPoint.after(clone);
-                
-                // Add pop-in animation
-                clone.classList.add('pop-in-animation');
-                clone.addEventListener('animationend', () => {
-                    clone.classList.remove('pop-in-animation');
-                }, { once: true });
-
-                // Initialize clone's functionality
-                initializeDraggable(clone);
-                initializeSelectable(clone);
-                const hpSpanClone = clone.querySelector('.text-2xl.font-mono');
-                initializeHpField(hpSpanClone);
-                clone.querySelectorAll('.status-container span').forEach(icon => {
-                    icon.addEventListener('click', () => icon.remove());
+                    createCharacter(newName, hp, statuses, original);
                 });
             }
         });
 
         clearStatusesButton.addEventListener('click', () => {
-             const selectedItem = document.querySelector('.highlighted');
-             if(selectedItem) {
-                 const statusContainer = selectedItem.querySelector('.status-container');
-                 if(statusContainer) {
-                     statusContainer.innerHTML = '';
-                 }
-             }
+             document.querySelectorAll('.highlighted').forEach(item => {
+                 const statusContainer = item.querySelector('.status-container');
+                 if(statusContainer) statusContainer.innerHTML = '';
+             });
+        });
+
+        let isSelecting = false;
+        let startX, startY;
+        shelf.addEventListener('mousedown', (e) => {
+            if (e.target !== shelf) return;
+            e.preventDefault();
+            isSelecting = true;
+            startX = e.clientX; startY = e.clientY;
+            Object.assign(selectionBox.style, { left: `${startX}px`, top: `${startY}px`, width: '0px', height: '0px', display: 'block' });
+            if (!e.shiftKey) {
+                document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
+                updateActionButtonsState();
+            }
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!isSelecting) return;
+            e.preventDefault();
+            const currentX = e.clientX, currentY = e.clientY;
+            const width = Math.abs(currentX - startX), height = Math.abs(currentY - startY);
+            const left = Math.min(currentX, startX), top = Math.min(currentY, startY);
+            Object.assign(selectionBox.style, { width: `${width}px`, height: `${height}px`, left: `${left}px`, top: `${top}px` });
+            const boxRect = selectionBox.getBoundingClientRect();
+            document.querySelectorAll('.draggable').forEach(item => {
+                if (item.querySelectorAll('span').length === 0) return;
+                const itemRect = item.getBoundingClientRect();
+                const isIntersecting = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
+                if (isIntersecting) item.classList.add('highlighted');
+                else if(!e.shiftKey) item.classList.remove('highlighted');
+            });
+            updateActionButtonsState();
+        });
+        window.addEventListener('mouseup', () => {
+            if (isSelecting) {
+                isSelecting = false;
+                selectionBox.style.display = 'none';
+            }
         });
         
         document.addEventListener('keydown', (event) => {
-            const activeElement = document.activeElement;
-            if (activeElement.getAttribute('contenteditable') === 'true') {
-                 return;
-            }
+            if (document.activeElement.getAttribute('contenteditable') === 'true') return;
             
             if (!statusModal.classList.contains('hidden') && event.code.startsWith('Digit')) {
                  event.preventDefault();
                  const keyNumber = event.code === 'Digit0' ? 9 : parseInt(event.code.slice(-1)) - 1;
                  const symbolButtons = symbolGrid.querySelectorAll('button');
-                 if (symbolButtons[keyNumber]) {
-                     symbolButtons[keyNumber].click();
-                 }
+                 if (symbolButtons[keyNumber]) symbolButtons[keyNumber].click();
                  return;
             }
 
             switch (event.code) {
                 case 'Space': event.preventDefault(); moveButton.click(); break;
                 case 'Backspace': event.preventDefault(); lastTurnButton.click(); break;
-                case 'KeyA': addButton.click(); break;
-                case 'KeyS':
-                    event.preventDefault();
-                    handleStatusModalToggle();
-                    break;
-                case 'KeyC':
-                    event.preventDefault();
-                    if (!copyButton.disabled) copyButton.click();
-                    break;
-                case 'KeyX':
-                    event.preventDefault();
-                    if (!clearStatusesButton.disabled) clearStatusesButton.click();
-                    break;
-                case 'Delete':
-                    event.preventDefault();
-                    if (!removeButton.disabled) removeButton.click();
-                    break;
+                case 'KeyA': event.preventDefault(); addButton.click(); break;
+                case 'KeyS': event.preventDefault(); handleStatusModalToggle(); break;
+                case 'KeyC': event.preventDefault(); if (!copyButton.disabled) copyButton.click(); break;
+                case 'KeyX': event.preventDefault(); if (!clearStatusesButton.disabled) clearStatusesButton.click(); break;
+                case 'Delete': event.preventDefault(); if (!removeButton.disabled) removeButton.click(); break;
                 case 'Escape':
-                    if (!statusModal.classList.contains('hidden')) {
-                         statusModal.classList.add('hidden');
+                    if (!statusModal.classList.contains('hidden')) statusModal.classList.add('hidden');
+                    else {
+                        document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
+                        updateActionButtonsState();
                     }
                     break;
             }
         });
         
-        // --- Initial Scene Setup ---
         function initializeDefaultScene() {
             createCharacter('Goblin 1', 7);
             createCharacter('Goblin 2', 7);
@@ -603,10 +543,7 @@
             createCharacter('Hector the Well-Endowed', 18, ['⚡️']);
         }
         
-        // populateSymbolModal(); // No longer needed here
         initializeDefaultScene();
-
     </script>
-
 </body>
 </html>
