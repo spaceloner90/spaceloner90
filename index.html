@@ -153,7 +153,7 @@
         ];
         let colorIndex = 0;
         
-        const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '�', '🤢', '❓', '💪', '🎯'];
+        const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
 
         // --- Core Functions for Item States ---
 
@@ -213,6 +213,70 @@
                 updateActionButtonsState();
             });
         }
+
+        function initializeHpField(hpSpan) {
+            // Store the original value on focus
+            hpSpan.addEventListener('focus', () => {
+                hpSpan.dataset.originalHp = hpSpan.textContent.trim();
+            });
+
+            // This function resolves the expression
+            const resolveHp = () => {
+                const originalHp = parseInt(hpSpan.dataset.originalHp, 10);
+                const expression = hpSpan.textContent.trim();
+
+                if (isNaN(originalHp)) return; // Failsafe
+
+                let newHp;
+                
+                try {
+                    // Use a regex to ensure the expression only contains safe characters.
+                    // This allows numbers, +, -, and whitespace.
+                    const validExpressionRegex = /^[0-9+\-\s]+$/;
+                    if (!validExpressionRegex.test(expression)) {
+                        throw new Error("Invalid characters in expression");
+                    }
+                    
+                    // Find all numbers, which can be preceded by an optional + or -
+                    // This correctly handles "12 - 5", "-6", and "7"
+                    const numbers = expression.match(/[+\-]?\s*\d+/g);
+                    
+                    if (!numbers) {
+                        throw new Error("No numbers found in expression");
+                    }
+
+                    // Safely sum up the parts of the expression
+                    const result = numbers.reduce((total, numStr) => {
+                        return total + parseInt(numStr.replace(/\s/g, ''), 10);
+                    }, 0);
+
+                    newHp = result;
+
+                } catch (error) {
+                    // If there's any error in parsing, revert to the original value.
+                    console.error("HP calculation error:", error);
+                    newHp = originalHp;
+                }
+                
+                hpSpan.textContent = newHp;
+            };
+            
+            // Resolve on blur (clicking away)
+            hpSpan.addEventListener('blur', resolveHp);
+
+            // Resolve on Enter key, revert on Escape
+            hpSpan.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault(); // Prevent new line in contenteditable
+                    resolveHp();
+                    hpSpan.blur(); // Unfocus the element to signify completion
+                } else if (e.key === 'Escape') {
+                    // Revert to original value on escape
+                    hpSpan.textContent = hpSpan.dataset.originalHp;
+                    hpSpan.blur();
+                }
+            });
+        }
         
         // --- Initialize functionalities for all existing items ---
         document.querySelectorAll('.draggable').forEach(item => {
@@ -252,7 +316,6 @@
             const newColor = colorPalette[colorIndex++ % colorPalette.length];
             newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
             
-            // Use placeholder for name if name is empty, otherwise set it directly.
             const nameContent = name ? name : '';
             const namePlaceholder = name ? '' : 'data-placeholder="Name"';
 
@@ -269,7 +332,6 @@
                 </div>
             `;
 
-            // Add statuses if any are provided
             const statusContainer = newItem.querySelector('.status-container');
             statuses.forEach(symbol => {
                  const statusIcon = document.createElement('span');
@@ -279,9 +341,9 @@
                  statusContainer.appendChild(statusIcon);
             });
             
-            newItem.querySelector('span[contenteditable="true"]:last-child').addEventListener('input', (e) => {
-                e.target.textContent = e.target.textContent.replace(/[^0-9]/g, '');
-            });
+            // Initialize the new HP field logic
+            const hpSpan = newItem.querySelector('.text-2xl.font-mono');
+            initializeHpField(hpSpan);
 
             initializeDraggable(newItem);
             initializeSelectable(newItem);
@@ -380,9 +442,9 @@
                 initializeSelectable(clone);
 
                 // Re-add event listener to the editable HP field in the clone
-                clone.querySelector('span[contenteditable="true"]:last-child').addEventListener('input', (e) => {
-                    e.target.textContent = e.target.textContent.replace(/[^0-9]/g, '');
-                });
+                const hpSpanClone = clone.querySelector('.text-2xl.font-mono');
+                initializeHpField(hpSpanClone);
+
 
                 // Re-add event listeners to status icons in the clone
                 clone.querySelectorAll('.status-container span').forEach(icon => {
@@ -404,7 +466,15 @@
         });
         
         document.addEventListener('keydown', (event) => {
-            if (document.activeElement.getAttribute('contenteditable') === 'true') return;
+            const activeElement = document.activeElement;
+            if (activeElement.getAttribute('contenteditable') === 'true' && activeElement.classList.contains('font-mono')) {
+                 // Special handling for HP field is inside initializeHpField, so we just stop here.
+                 return;
+            }
+            if (activeElement.getAttribute('contenteditable') === 'true') {
+                // For other editable fields (like name), we also stop here.
+                return;
+            }
             
             if (!statusModal.classList.contains('hidden') && event.code.startsWith('Digit')) {
                  event.preventDefault();
