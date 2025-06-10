@@ -42,6 +42,8 @@
             cursor: grab;
             transition: transform 0.3s ease, box-shadow 0.3s ease;
             position: relative; 
+            background-size: cover;
+            background-position: center;
         }
         .draggable:active {
             cursor: grabbing;
@@ -100,12 +102,52 @@
             pointer-events: none; /* So it doesn't interfere with mouse events */
             z-index: 9999;
         }
+
+        /* Style for the custom color context menu */
+        #context-menu {
+            position: absolute;
+            z-index: 10000;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            padding: 8px;
+            width: 200px;
+        }
+        
+        /* Add a text shadow for readability over any background */
+        .text-readable {
+            text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+        }
     </style>
 </head>
 <body class="bg-gray-100">
 
     <!-- This div is for the drag-to-select feature -->
     <div id="selection-box" style="display: none;"></div>
+    
+    <!-- Custom context menu for changing colors and images -->
+    <div id="context-menu" class="hidden">
+        <div class="space-y-2">
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Image URL</label>
+                <div class="mt-1 flex rounded-md shadow-sm">
+                    <input type="text" id="image-url-input" class="focus:ring-indigo-500 focus:border-indigo-500 flex-1 block w-full rounded-none rounded-l-md sm:text-sm border-gray-300 p-1">
+                    <button id="apply-url-btn" class="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">Apply</button>
+                </div>
+            </div>
+            <div>
+                <label for="image-file-input" class="block text-sm font-medium text-gray-700">Or Upload File</label>
+                <input type="file" id="image-file-input" class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100"/>
+            </div>
+            <div class="border-t border-gray-200 pt-2">
+                 <p class="text-sm font-medium text-gray-700 mb-1">Color</p>
+                 <div id="color-grid" class="grid grid-cols-6 gap-2">
+                    <!-- Color swatches will be populated here by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
 
     <!-- Main container for the scene -->
     <div class="w-full max-w-6xl mx-auto px-4 py-8">
@@ -181,12 +223,17 @@
         const closeModalButton = document.getElementById('close-modal-btn');
         const symbolGrid = document.getElementById('symbol-grid');
         const selectionBox = document.getElementById('selection-box');
+        const contextMenu = document.getElementById('context-menu');
+        const colorGrid = document.getElementById('color-grid');
+        const imageUrlInput = document.getElementById('image-url-input');
+        const applyUrlButton = document.getElementById('apply-url-btn');
+        const imageFileInput = document.getElementById('image-file-input');
 
         // --- Data ---
         const colorPalette = [
-            'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-lime-500', 
-            'bg-green-500', 'bg-cyan-500', 'bg-sky-500', 'bg-indigo-500',
-            'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500', 'bg-rose-500'
+            'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500', 'bg-lime-500', 'bg-green-500', 
+            'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500', 'bg-sky-500', 'bg-blue-500', 'bg-indigo-500',
+            'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500', 'bg-rose-500', 'bg-slate-500'
         ];
         let colorIndex = 0;
         
@@ -288,9 +335,27 @@
             });
         }
         
+        function initializeContextMenu(item) {
+            item.addEventListener('contextmenu', e => {
+                e.preventDefault();
+                
+                if (!item.classList.contains('highlighted')) {
+                    document.querySelectorAll('.highlighted').forEach(el => el.classList.remove('highlighted'));
+                    item.classList.add('highlighted');
+                    updateActionButtonsState();
+                }
+
+                contextMenu.style.left = `${e.clientX}px`;
+                contextMenu.style.top = `${e.clientY}px`;
+                contextMenu.classList.remove('hidden');
+            });
+        }
+
+
         document.querySelectorAll('.draggable').forEach(item => {
             initializeDraggable(item);
             initializeSelectable(item);
+            initializeContextMenu(item);
         });
 
         shelf.addEventListener('dragover', e => {
@@ -312,20 +377,33 @@
             }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
 
-        function createCharacter(name, hp, statuses = [], insertionElement = null) {
+        function createCharacter(name, hp, statuses = [], options = {}) {
+            const { 
+                insertionElement = null, 
+                backgroundColorClass = null, 
+                backgroundImage = '' 
+            } = options;
+
             const newItem = document.createElement('div');
-            const newColor = colorPalette[colorIndex++ % colorPalette.length];
+            
+            // Use provided background class, or pick a new one
+            const newColor = backgroundColorClass || colorPalette[colorIndex++ % colorPalette.length];
             newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
+            
+            // Apply background image if it exists
+            if (backgroundImage) {
+                newItem.style.backgroundImage = backgroundImage;
+            }
             
             const nameContent = name || '';
             const namePlaceholder = name ? '' : 'data-placeholder="Name"';
 
             newItem.innerHTML = `
                 <div class="flex flex-col items-center flex-shrink-0">
-                    <span contenteditable="true" class="font-bold text-lg p-1 text-center" ${namePlaceholder}>${nameContent}</span>
+                    <span contenteditable="true" class="font-bold text-lg p-1 text-center text-readable">${nameContent}</span>
                     <div class="flex flex-col items-center mt-2">
-                        <span class="text-xs font-semibold text-white/80 select-none">HP</span>
-                        <span contenteditable="true" class="text-2xl font-mono p-1">${hp}</span>
+                        <span class="text-xs font-semibold text-white/80 select-none text-readable">HP</span>
+                        <span contenteditable="true" class="text-2xl font-mono p-1 text-readable">${hp}</span>
                     </div>
                 </div>
                 <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2"></div>`;
@@ -333,7 +411,7 @@
             const statusContainer = newItem.querySelector('.status-container');
             statuses.forEach(symbol => {
                  const statusIcon = document.createElement('span');
-                 statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer";
+                 statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer text-readable";
                  statusIcon.textContent = symbol;
                  statusIcon.addEventListener('click', () => statusIcon.remove());
                  statusContainer.appendChild(statusIcon);
@@ -342,6 +420,7 @@
             initializeHpField(newItem.querySelector('.text-2xl.font-mono'));
             initializeDraggable(newItem);
             initializeSelectable(newItem);
+            initializeContextMenu(newItem);
             
             if(insertionElement) insertionElement.after(newItem);
             else shelf.appendChild(newItem);
@@ -350,53 +429,62 @@
             newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
         }
 
-        // --- Modal Logic ---
+        // --- Modal & Menu Logic ---
         function populateSymbolModal(selectedItems) {
             symbolGrid.innerHTML = '';
             
-            statusSymbols.forEach((symbol, index) => {
+            statusSymbols.forEach((symbol) => {
                 const symbolButton = document.createElement('button');
                 symbolButton.className = "relative text-3xl p-4 rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500";
                 
-                const allHaveStatus = selectedItems.length > 0 && Array.from(selectedItems).every(item => {
-                    const appliedStatuses = Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent);
-                    return appliedStatuses.includes(symbol);
-                });
+                const allHaveStatus = selectedItems.length > 0 && Array.from(selectedItems).every(item => 
+                    Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent).includes(symbol)
+                );
                 
                 if (allHaveStatus) symbolButton.classList.add('symbol-selected');
 
-                const displayNumber = (index + 1) % 10;
-                symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${displayNumber}</span>`;
+                symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${(statusSymbols.indexOf(symbol) + 1) % 10}</span>`;
                 
                 symbolButton.addEventListener('click', () => {
-                    // Decide action based on state *before* the click
                     if (allHaveStatus) {
-                        // If all have it, remove from all
                         selectedItems.forEach(item => {
                             item.querySelectorAll('.status-container span').forEach(icon => {
                                 if (icon.textContent === symbol) icon.remove();
                             });
                         });
-                        symbolButton.classList.remove('symbol-selected');
                     } else {
-                        // If some/none have it, add to all
                         selectedItems.forEach(item => {
-                            const appliedStatuses = Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent);
-                            if (!appliedStatuses.includes(symbol)) {
+                            if (!Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent).includes(symbol)) {
                                 const statusIcon = document.createElement('span');
-                                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer";
+                                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer text-readable";
                                 statusIcon.textContent = symbol;
                                 statusIcon.addEventListener('click', () => statusIcon.remove());
                                 item.querySelector('.status-container').appendChild(statusIcon);
                             }
                         });
-                        // After adding to all, the button should appear selected
-                        symbolButton.classList.add('symbol-selected');
                     }
-                    // Repopulate to correctly reflect the new state for the next click
                     populateSymbolModal(selectedItems);
                 });
                 symbolGrid.appendChild(symbolButton);
+            });
+        }
+        
+        function populateColorMenu() {
+            colorGrid.innerHTML = ''; // Clear previous swatches
+            colorPalette.forEach(color => {
+                const swatch = document.createElement('button');
+                swatch.className = `w-8 h-8 rounded-full ${color} border-2 border-white/50 hover:scale-110 transition-transform`;
+                swatch.dataset.color = color;
+                swatch.addEventListener('click', () => {
+                    const selectedItems = document.querySelectorAll('.highlighted');
+                    selectedItems.forEach(item => {
+                        item.style.backgroundImage = ''; // Clear image if color is set
+                        item.classList.remove(...colorPalette);
+                        item.classList.add(color);
+                    });
+                    contextMenu.classList.add('hidden');
+                });
+                colorGrid.appendChild(swatch);
             });
         }
         
@@ -420,6 +508,34 @@
              if (e.target.id === 'status-modal') statusModal.classList.add('hidden');
         });
         
+        // --- Context Menu Image Logic ---
+        applyUrlButton.addEventListener('click', () => {
+            const url = imageUrlInput.value.trim();
+            if (url) {
+                document.querySelectorAll('.highlighted').forEach(item => {
+                    item.style.backgroundImage = `url('${url}')`;
+                });
+            }
+            contextMenu.classList.add('hidden');
+            imageUrlInput.value = '';
+        });
+
+        imageFileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const imageUrl = event.target.result;
+                    document.querySelectorAll('.highlighted').forEach(item => {
+                        item.style.backgroundImage = `url('${imageUrl}')`;
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+            contextMenu.classList.add('hidden');
+            e.target.value = null; // Reset file input
+        });
+
         // --- Button & Keyboard Logic ---
         lastTurnButton.addEventListener('click', () => {
             const lastItem = shelf.querySelector('.draggable:last-child');
@@ -446,6 +562,9 @@
                     const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
                     const hp = original.querySelector('.text-2xl.font-mono').textContent.trim();
                     const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
+                    const backgroundImage = original.style.backgroundImage;
+                    const backgroundColorClass = Array.from(original.classList).find(cls => colorPalette.includes(cls));
+                    
                     let newName = originalName;
                     
                     if (originalName !== '') {
@@ -458,7 +577,13 @@
                         newName = nextName;
                         allNames.add(newName);
                     }
-                    createCharacter(newName, hp, statuses, original);
+                    
+                    const options = {
+                        insertionElement: original,
+                        backgroundImage,
+                        backgroundColorClass
+                    };
+                    createCharacter(newName, hp, statuses, options);
                 });
             }
         });
@@ -507,7 +632,18 @@
             }
         });
         
+        // --- Global Event Listeners to close popups ---
         document.addEventListener('keydown', (event) => {
+            if(event.key === 'Escape') {
+                if (!statusModal.classList.contains('hidden')) statusModal.classList.add('hidden');
+                else if (!contextMenu.classList.contains('hidden')) contextMenu.classList.add('hidden');
+                else {
+                    document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
+                    updateActionButtonsState();
+                }
+                return;
+            }
+
             if (document.activeElement.getAttribute('contenteditable') === 'true') return;
             
             if (!statusModal.classList.contains('hidden') && event.code.startsWith('Digit')) {
@@ -526,16 +662,15 @@
                 case 'KeyC': event.preventDefault(); if (!copyButton.disabled) copyButton.click(); break;
                 case 'KeyX': event.preventDefault(); if (!clearStatusesButton.disabled) clearStatusesButton.click(); break;
                 case 'Delete': event.preventDefault(); if (!removeButton.disabled) removeButton.click(); break;
-                case 'Escape':
-                    if (!statusModal.classList.contains('hidden')) statusModal.classList.add('hidden');
-                    else {
-                        document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
-                        updateActionButtonsState();
-                    }
-                    break;
             }
         });
         
+        window.addEventListener('click', (e) => {
+            if (!contextMenu.classList.contains('hidden') && !contextMenu.contains(e.target) && !e.target.closest('.draggable')) {
+                contextMenu.classList.add('hidden');
+            }
+        });
+
         function initializeDefaultScene() {
             createCharacter('Goblin 1', 7);
             createCharacter('Goblin 2', 7);
@@ -543,6 +678,7 @@
             createCharacter('Hector the Well-Endowed', 18, ['⚡️']);
         }
         
+        populateColorMenu();
         initializeDefaultScene();
     </script>
 </body>
