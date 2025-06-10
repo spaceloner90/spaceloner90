@@ -157,8 +157,7 @@
         <!-- Container for the elements, now a wrapping flex container -->
         <div id="shelf-items" class="flex flex-wrap justify-center items-start gap-4 min-h-80 p-4 bg-white rounded-lg shadow-inner">
             
-            <!-- The Black Bar / Turn Marker -->
-            <div class="draggable bg-black rounded-full w-2 h-56 shadow-lg self-center"></div>
+            <!-- The Black Bar / Turn Marker is loaded dynamically -->
 
             <!-- Elements will be populated by JavaScript -->
         </div>
@@ -358,22 +357,43 @@
             initializeContextMenu(item);
         });
 
+        // --- Drag & Drop Logic ---
         shelf.addEventListener('dragover', e => {
             e.preventDefault();
             const draggingItem = document.querySelector('.dragging');
             if (!draggingItem) return;
-            const afterElement = getDragAfterElement(shelf, e.clientX);
-            if (afterElement == null) shelf.appendChild(draggingItem);
-            else shelf.insertBefore(draggingItem, afterElement);
+
+            // Pass both X and Y coordinates to the placement function
+            const afterElement = getDragAfterElement(shelf, e.clientX, e.clientY);
+            
+            if (afterElement == null) {
+                shelf.appendChild(draggingItem);
+            } else {
+                shelf.insertBefore(draggingItem, afterElement);
+            }
         });
 
-        function getDragAfterElement(container, x) {
+        function getDragAfterElement(container, x, y) {
             const draggableElements = [...container.querySelectorAll('.draggable:not(.dragging)')];
+
             return draggableElements.reduce((closest, child) => {
                 const box = child.getBoundingClientRect();
-                const offset = x - box.left - box.width / 2;
-                if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
-                else return closest;
+
+                // Check if the cursor is vertically within the element's bounds.
+                // This is the key change to handle multiple rows correctly.
+                if (y > box.top && y < box.bottom) {
+                    const offset = x - box.left - box.width / 2;
+                    // We are looking for an element that is to the right of the cursor (offset < 0)
+                    // and is the closest one on its right.
+                    if (offset < 0 && offset > closest.offset) {
+                        return { offset: offset, element: child };
+                    } else {
+                        return closest;
+                    }
+                }
+                // If not on the same vertical plane, keep the previous closest.
+                return closest;
+
             }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
 
@@ -386,11 +406,9 @@
 
             const newItem = document.createElement('div');
             
-            // Use provided background class, or pick a new one
             const newColor = backgroundColorClass || colorPalette[colorIndex++ % colorPalette.length];
             newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
             
-            // Apply background image if it exists
             if (backgroundImage) {
                 newItem.style.backgroundImage = backgroundImage;
             }
@@ -400,7 +418,7 @@
 
             newItem.innerHTML = `
                 <div class="flex flex-col items-center flex-shrink-0">
-                    <span contenteditable="true" class="font-bold text-lg p-1 text-center text-readable">${nameContent}</span>
+                    <span contenteditable="true" class="font-bold text-lg p-1 text-center text-readable" ${namePlaceholder}>${nameContent}</span>
                     <div class="flex flex-col items-center mt-2">
                         <span class="text-xs font-semibold text-white/80 select-none text-readable">HP</span>
                         <span contenteditable="true" class="text-2xl font-mono p-1 text-readable">${hp}</span>
@@ -427,6 +445,13 @@
 
             newItem.classList.add('pop-in-animation');
             newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
+        }
+        
+        function createTurnMarker() {
+            const turnMarker = document.createElement('div');
+            turnMarker.className = 'draggable bg-black rounded-full w-2 h-56 shadow-lg self-center';
+            initializeDraggable(turnMarker);
+            shelf.appendChild(turnMarker);
         }
 
         // --- Modal & Menu Logic ---
@@ -558,6 +583,8 @@
             const originals = document.querySelectorAll('.highlighted');
             if (originals.length > 0) {
                 let allNames = new Set(Array.from(document.querySelectorAll('#shelf-items .font-bold.text-lg')).map(span => span.textContent.trim()));
+                let lastOriginal = originals[originals.length - 1]; // Find the last selected item to insert after
+
                 originals.forEach(original => {
                     const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
                     const hp = original.querySelector('.text-2xl.font-mono').textContent.trim();
@@ -566,6 +593,7 @@
                     const backgroundColorClass = Array.from(original.classList).find(cls => colorPalette.includes(cls));
                     
                     let newName = originalName;
+                    let insertionPoint = lastOriginal;
                     
                     if (originalName !== '') {
                         const getNextName = (currentName) => {
@@ -573,17 +601,30 @@
                             return match ? `${match[1]} ${parseInt(match[2], 10) + 1}` : `${currentName} 2`;
                         };
                         let nextName = getNextName(originalName);
-                        while (allNames.has(nextName)) nextName = getNextName(nextName);
+                        while (allNames.has(nextName)) {
+                            nextName = getNextName(nextName);
+                        }
                         newName = nextName;
                         allNames.add(newName);
+
+                        // Find the true last item in the sequence for insertion
+                        const baseName = (originalName.match(/(.+) (\d+)$/) || [null, originalName])[1];
+                        const allSiblings = Array.from(document.querySelectorAll('#shelf-items .draggable')).filter(el => {
+                             const nameSpan = el.querySelector('.font-bold.text-lg');
+                             return nameSpan && nameSpan.textContent.trim().startsWith(baseName);
+                        });
+                        if (allSiblings.length > 0) {
+                            insertionPoint = allSiblings[allSiblings.length -1];
+                        }
                     }
                     
                     const options = {
-                        insertionElement: original,
+                        insertionElement: insertionPoint,
                         backgroundImage,
                         backgroundColorClass
                     };
                     createCharacter(newName, hp, statuses, options);
+                    lastOriginal = insertionPoint.nextElementSibling; // The new insertion point is the card we just created
                 });
             }
         });
@@ -672,14 +713,21 @@
         });
 
         function initializeDefaultScene() {
+            createTurnMarker();
             createCharacter('Goblin 1', 7);
             createCharacter('Goblin 2', 7);
             createCharacter('Goblin 3', 2, ['❤️‍🩹']);
             createCharacter('Hector the Well-Endowed', 18, ['⚡️']);
         }
         
-        populateColorMenu();
-        initializeDefaultScene();
+        // --- Initial App Start ---
+        function initializeApp() {
+            populateColorMenu();
+            initializeDefaultScene();
+        }
+        
+        initializeApp();
+
     </script>
 </body>
 </html>
