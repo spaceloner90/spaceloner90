@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML MUD Adventure</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter & VT323 for a classic MUD feel -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=VT323&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styles for our MUD */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Style for the game output and map, using a monospace font */
+        #game-output, #map-container, #map-header {
+            font-family: 'VT323', monospace;
+            font-size: 1.1rem; /* Adjusted for more map content */
+            line-height: 1.5rem; /* Adjusted for more map content */
+        }
+        #map-container {
+             white-space: pre; /* This is crucial for rendering ASCII art correctly */
+             background-color: #111827; /* bg-gray-900 */
+             border: 2px solid #374151; /* border-gray-700 */
+             padding: 1rem;
+             border-radius: 0.5rem;
+             min-height: 120px; /* Adjust min height */
+             transition: all 0.2s ease-in-out;
+        }
+        .map-size-btn {
+            padding: 0.1rem 0.5rem;
+            border: 1px solid #4b5563;
+            border-radius: 0.25rem;
+            background-color: #374151;
+            cursor: pointer;
+        }
+        .map-size-btn.active {
+            background-color: #6ee7b7;
+            color: #1f2937;
+            border-color: #6ee7b7;
+        }
+        /* Custom focus ring color for the input */
+        .focus-ring-cyan {
+            --tw-ring-opacity: 1;
+            --tw-ring-color: rgb(103 232 249 / var(--tw-ring-opacity));
+        }
+        .focus-ring-cyan:focus {
+            border-color: rgb(103 232 249 / 0.5);
+            box-shadow: 0 0 0 2px rgb(103 232 249 / 0.5);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200">
+
+    <!-- Main Game Container -->
+    <div id="game-container" class="h-screen flex flex-col p-4 md:p-6 max-w-7xl mx-auto w-full">
+        
+        <header class="border-b-2 border-gray-700 pb-4 mb-4 flex-shrink-0">
+            <h1 class="text-3xl md:text-4xl font-bold text-white text-center">A New World</h1>
+        </header>
+
+        <!-- Content Area: This section will grow and its children will scroll -->
+        <main class="flex flex-col md:flex-row gap-6 flex-1 min-h-0">
+            <!-- Game Output Area -->
+            <div class="flex-1 flex flex-col min-h-0">
+                <div id="game-output" class="flex-1 overflow-y-auto space-y-4 pr-2">
+                    <!-- Game text will be dynamically added here -->
+                </div>
+            </div>
+            
+            <!-- Right Sidebar for Map -->
+            <aside class="w-full md:w-auto md:max-w-2xl md:sticky md:top-6 self-start">
+                 <div id="map-header" class="flex justify-between items-center mb-2 text-gray-400">
+                    <div id="coords-display">
+                        (<span id="coord-x">0</span>,<span id="coord-y">0</span>,<span id="coord-z">0</span>)
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span>Size:</span>
+                        <button id="map-size-s" class="map-size-btn">3x3</button>
+                        <button id="map-size-m" class="map-size-btn">5x5</button>
+                        <button id="map-size-l" class="map-size-btn active">7x7</button>
+                    </div>
+                 </div>
+                 <div id="map-container" class="text-center text-gray-400 overflow-x-auto">
+                    <!-- ASCII Map will be rendered here -->
+                 </div>
+            </aside>
+        </main>
+
+        <!-- Input Area (will be pushed to the bottom) -->
+        <footer class="pt-4 flex-shrink-0">
+            <form id="command-form" class="flex items-center gap-3">
+                <label for="command-input" class="text-cyan-400 font-bold text-xl">&gt;</label>
+                <input 
+                    type="text" 
+                    id="command-input" 
+                    name="command"
+                    autocomplete="off"
+                    placeholder="Type a command..." 
+                    class="flex-1 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg px-4 py-2 focus:outline-none focus-ring-cyan transition duration-200">
+                <button 
+                    type="submit"
+                    class="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200">
+                    Send
+                </button>
+            </form>
+        </footer>
+    </div>
+
+    <!-- 
+    ============================================
+    GAME LOGIC AND DATA
+    ============================================
+    -->
+    <script>
+        /**
+         * ROOM REPOSITORY
+         */
+        const roomRepository = {
+            // Row 0 (y:0): Babbling Brook (far west) to Old Windmill (far east)
+            'room_0_0': { id: 'room_0_0', name: 'Babbling Brook', description: 'A clear, babbling brook.', coords: { x: 0, y: 0, z: 0 }, exits: { east: 'room_1_0', north: 'room_0_1' }, color: 'text-blue-400', mapChar: 'B' },
+            'room_1_0': { id: 'room_1_0', name: 'Dilapidated House', description: 'A crumbling, abandoned house.', coords: { x: 1, y: 0, z: 0 }, exits: { west: 'room_0_0', east: 'room_2_0' }, color: 'text-gray-600', mapChar: 'D' },
+            'room_2_0': { id: 'room_2_0', name: 'Cobbled Square', description: 'A wide cobbled square.', coords: { x: 2, y: 0, z: 0 }, exits: { west: 'room_1_0', east: 'room_3_0', north: 'room_2_1', northeast: 'room_3_1' }, color: 'text-gray-300', mapChar: 'C' },
+            'room_3_0': { id: 'room_3_0', name: 'Market Street', description: 'A bustling market street.', coords: { x: 3, y: 0, z: 0 }, exits: { west: 'room_2_0', east: 'room_4_0', north: 'room_3_1' }, color: 'text-yellow-300', mapChar: 'M' },
+            'room_4_0': { id: 'room_4_0', name: 'Apothecary', description: 'A strange-smelling apothecary.', coords: { x: 4, y: 0, z: 0 }, exits: { west: 'room_3_0', east: 'room_5_0', north: 'room_4_1' }, color: 'text-purple-400', mapChar: 'A' },
+            'room_5_0': { id: 'room_5_0', name: 'Guard Barracks', description: 'A tidy guard barracks.', coords: { x: 5, y: 0, z: 0 }, exits: { west: 'room_4_0', east: 'room_6_0', north: 'room_5_1' }, color: 'text-red-400', mapChar: 'G' },
+            'room_6_0': { id: 'room_6_0', name: 'City Gates', description: 'The imposing city gates.', coords: { x: 6, y: 0, z: 0 }, exits: { west: 'room_5_0', east: 'room_7_0' }, color: 'text-stone-400', mapChar: 'G' },
+            'room_7_0': { id: 'room_7_0', name: 'Old Windmill', description: 'A creaking, old windmill.', coords: { x: 7, y: 0, z: 0 }, exits: { west: 'room_6_0', north: 'room_7_1' }, color: 'text-yellow-400', mapChar: 'W' },
+
+            // Row 1 (y:1)
+            'room_0_1': { id: 'room_0_1', name: 'Overgrown Path', description: 'A path reclaimed by nature.', coords: { x: 0, y: 1, z: 0 }, exits: { south: 'room_0_0', east: 'room_1_1', north: 'room_0_2' }, color: 'text-lime-600', mapChar: 'O' },
+            'room_1_1': { id: 'room_1_1', name: 'Side Alley', description: 'A narrow, dark alley.', coords: { x: 1, y: 1, z: 0 }, exits: { west: 'room_0_1', east: 'room_2_1', south: 'room_1_0', north: 'room_1_2' }, color: 'text-gray-500', mapChar: 'S' },
+            'room_2_1': { id: 'room_2_1', name: 'Town Hall', description: 'The grand town hall.', coords: { x: 2, y: 1, z: 0 }, exits: { west: 'room_1_1', east: 'room_3_1', south: 'room_2_0', north: 'room_2_2', southwest: 'room_1_0' }, color: 'text-blue-300', mapChar: 'T' },
+            'room_3_1': { id: 'room_3_1', name: 'Herbalist\'s Garden', description: 'A fragrant herb garden.', coords: { x: 3, y: 1, z: 0 }, exits: { west: 'room_2_1', east: 'room_4_1', south: 'room_3_0', north: 'room_3_2' }, color: 'text-lime-400', mapChar: 'H' },
+            'room_4_1': { id: 'room_4_1', name: 'Training Yard', description: 'A dusty training yard.', coords: { x: 4, y: 1, z: 0 }, exits: { west: 'room_3_1', east: 'room_5_1', south: 'room_4_0', north: 'room_4_2', northeast: 'room_5_2' }, color: 'text-orange-400', mapChar: 'Y' },
+            'room_5_1': { id: 'room_5_1', name: 'Watchtower Base', description: 'The base of a tall watchtower.', coords: { x: 5, y: 1, z: 0 }, exits: { west: 'room_4_1', east: 'room_6_1', south: 'room_5_0', north: 'room_5_2' }, color: 'text-stone-500', mapChar: 'W' },
+            'room_6_1': { id: 'room_6_1', name: 'Rolling Hills', description: 'Rolling green hills.', coords: { x: 6, y: 1, z: 0 }, exits: { west: 'room_5_1', east: 'room_7_1', south: 'room_6_0', north: 'room_6_2' }, color: 'text-green-500', mapChar: 'R' },
+            'room_7_1': { id: 'room_7_1', name: 'Farmland', description: 'Expansive, open farmland.', coords: { x: 7, y: 1, z: 0 }, exits: { west: 'room_6_1', south: 'room_7_0', north: 'room_7_2' }, color: 'text-green-400', mapChar: 'F' },
+
+            // Row 2 (y:2)
+            'room_0_2': { id: 'room_0_2', name: 'Ancient Cemetery', description: 'An old, spooky cemetery.', coords: { x: 0, y: 2, z: 0 }, exits: { south: 'room_0_1', east: 'room_1_2' }, color: 'text-slate-500', mapChar: 'A' },
+            'room_1_2': { id: 'room_1_2', name: 'Crypt Entrance', description: 'The entrance to a dark crypt.', coords: { x: 1, y: 2, z: 0 }, exits: { west: 'room_0_2', east: 'room_2_2', south: 'room_1_1', north: 'room_1_3' }, color: 'text-slate-600', mapChar: 'C' },
+            'room_2_2': { id: 'room_2_2', name: 'Central Fountain', description: 'A beautiful central fountain.', coords: { x: 2, y: 2, z: 0 }, exits: { west: 'room_1_2', east: 'room_3_2', south: 'room_2_1', north: 'room_2_3' }, color: 'text-cyan-400', mapChar: 'F' },
+            'room_3_2': { id: 'room_3_2', name: 'Library Entrance', description: 'The entrance to a quiet library.', coords: { x: 3, y: 2, z: 0 }, exits: { west: 'room_2_2', east: 'room_4_2', south: 'room_3_1', north: 'room_3_3' }, color: 'text-blue-400', mapChar: 'L' },
+            'room_4_2': { id: 'room_4_2', name: 'Armory', description: 'A well-stocked armory.', coords: { x: 4, y: 2, z: 0 }, exits: { west: 'room_3_2', east: 'room_5_2', south: 'room_4_1', north: 'room_4_3' }, color: 'text-orange-500', mapChar: 'A' },
+            'room_5_2': { id: 'room_5_2', name: 'Tower Stairs', description: 'Winding stairs up the tower.', coords: { x: 5, y: 2, z: 0 }, exits: { west: 'room_4_2', east: 'room_6_2', south: 'room_5_1', north: 'room_5_3', southwest: 'room_4_1' }, color: 'text-stone-400', mapChar: 'T' },
+            'room_6_2': { id: 'room_6_2', name: 'Quiet Grove', description: 'A quiet grove of trees.', coords: { x: 6, y: 2, z: 0 }, exits: { west: 'room_5_2', south: 'room_6_1', north: 'room_6_3' }, color: 'text-emerald-500', mapChar: 'Q' },
+            'room_7_2': { id: 'room_7_2', name: 'Dusty Crypt', description: 'A dusty, silent crypt.', coords: { x: 7, y: 2, z: 0 }, exits: { south: 'room_7_1' }, color: 'text-gray-500', mapChar: 'D' },
+
+            // Row 3 (y:3)
+            'room_1_3': { id: 'room_1_3', name: 'Tannery', description: 'A pungent tannery.', coords: { x: 1, y: 3, z: 0 }, exits: { south: 'room_1_2', east: 'room_2_3' }, color: 'text-amber-700', mapChar: 'T' },
+            'room_2_3': { id: 'room_2_3', name: 'Great Library', description: 'The silent, dusty Great Library.', coords: { x: 2, y: 3, z: 0 }, exits: { west: 'room_1_3', south: 'room_2_2', east: 'room_3_3' }, color: 'text-blue-500', mapChar: 'L' },
+            'room_3_3': { id: 'room_3_3', name: 'Blacksmith', description: 'A noisy, hot blacksmith.', coords: { x: 3, y: 3, z: 0 }, exits: { west: 'room_2_3', south: 'room_3_2', east: 'room_4_3' }, color: 'text-orange-500', mapChar: 'B' },
+            'room_4_3': { id: 'room_4_3', name: 'Stable', description: 'A hay-filled stable.', coords: { x: 4, y: 3, z: 0 }, exits: { west: 'room_3_3', south: 'room_4_2', east: 'room_5_3', north: 'room_4_4', southeast: 'room_5_2' }, color: 'text-yellow-700', mapChar: 'S' },
+            'room_5_3': { id: 'room_5_3', name: 'Northern Road', description: 'A road leading out of town.', coords: { x: 5, y: 3, z: 0 }, exits: { west: 'room_4_3', south: 'room_5_2', east: 'room_6_3', southwest: 'room_4_2' }, color: 'text-gray-400', mapChar: 'N' },
+            'room_6_3': { id: 'room_6_3', name: 'Farmland', description: 'Expansive, open farmland.', coords: { x: 6, y: 3, z: 0 }, exits: { west: 'room_5_3', south: 'room_6_2', east: 'room_7_3' }, color: 'text-green-400', mapChar: 'F' },
+            'room_7_3': { id: 'room_7_3', name: 'Old Windmill', description: 'A creaking, old windmill.', coords: { x: 7, y: 3, z: 0 }, exits: { west: 'room_6_3', south: 'room_7_2' }, color: 'text-yellow-400', mapChar: 'W' },
+
+            // Row 4 (y:4)
+            'room_4_4': { id: 'room_4_4', name: 'Babbling Brook', description: 'A clear, babbling brook.', coords: { x: 4, y: 4, z: 0 }, exits: { south: 'room_4_3' }, color: 'text-blue-400', mapChar: 'B' }
+        };
+
+        const coordsToRoomId = {};
+        for(const id in roomRepository) {
+            const room = roomRepository[id];
+            coordsToRoomId[`${room.coords.x},${room.coords.y},${room.coords.z}`] = id;
+        }
+
+        const directionVectors = {
+            north: {x:0, y:1, z:0}, south: {x:0, y:-1, z:0}, east: {x:1, y:0, z:0}, west: {x:-1, y:0, z:0},
+            northeast: {x:1, y:1, z:0}, northwest: {x:-1, y:1, z:0}, southeast: {x:1, y:-1, z:0}, southwest: {x:-1, y:-1, z:0},
+            up: {x:0, y:0, z:1}, down: {x:0, y:0, z:-1}
+        };
+
+        const oppositeDirections = {
+            north: 'south', south: 'north', east: 'west', west: 'east',
+            northeast: 'southwest', southwest: 'northeast',
+            northwest: 'southeast', southeast: 'northwest',
+            up: 'down', down: 'up'
+        };
+
+        const visitedRooms = new Set();
+        
+        function validateWorld(startRoomId) {
+            const errors = [];
+            const warnings = [];
+
+            const reachableRooms = new Set();
+            const queue = [startRoomId];
+            reachableRooms.add(startRoomId);
+            let head = 0;
+            while(head < queue.length) {
+                const currentRoomId = queue[head++];
+                const room = roomRepository[currentRoomId];
+                if (room && room.exits) {
+                    for (const dir in room.exits) {
+                        const destinationId = room.exits[dir];
+                        if (destinationId && roomRepository[destinationId] && !reachableRooms.has(destinationId)) {
+                            reachableRooms.add(destinationId);
+                            queue.push(destinationId);
+                        }
+                    }
+                }
+            }
+            for (const roomId in roomRepository) {
+                if (!reachableRooms.has(roomId)) {
+                    errors.push(`Unreachable Room: '${roomRepository[roomId].name}' (${roomId}) is not reachable from the start.`);
+                }
+            }
+
+            for (const roomAId in roomRepository) {
+                const roomA = roomRepository[roomAId];
+                if (!roomA.exits) continue;
+                for (const direction in roomA.exits) {
+                    const roomBId = roomA.exits[direction];
+                    const roomB = roomRepository[roomBId];
+                    if (!roomB) {
+                        errors.push(`Bad Exit: Room '${roomA.name}' (${roomAId}) has an exit to non-existent room '${roomBId}'.`);
+                        continue;
+                    }
+                    const oppositeDir = oppositeDirections[direction];
+                    if (!roomB.exits || !roomB.exits[oppositeDir] || roomB.exits[oppositeDir] !== roomAId) {
+                         warnings.push(`One-Way Exit: '${roomA.name}' (${roomAId}) -> '${roomB.name}' (${roomBId}) has no return.`);
+                    }
+                }
+            }
+            return { errors, warnings };
+        }
+
+        const mapRenderer = {
+            render: function(playerX, playerY, roomRadius) {
+                const numRooms = (roomRadius * 2) + 1;
+                const gridHeight = numRooms * 2 - 1;
+                const gridWidth = numRooms * 4 - 3;
+                const mapData = Array.from({ length: gridWidth }, () => Array(gridHeight).fill({ char: ' ', color: 'text-gray-500' }));
+                
+                for (let yOffset = -roomRadius; yOffset <= roomRadius; yOffset++) {
+                    for (let xOffset = -roomRadius; xOffset <= roomRadius; xOffset++) {
+                        const roomX = playerX + xOffset;
+                        const roomY = playerY + yOffset;
+                        
+                        const gridCenterX = Math.floor(gridWidth / 2);
+                        const gridCenterY = Math.floor(gridHeight / 2);
+                        
+                        const displayX = gridCenterX + (xOffset * 4);
+                        const displayY = gridCenterY - (yOffset * 2); // (This is correct for north=+Y, north is up)
+
+                        const sourceCoordStr = `${roomX},${roomY},${game.player.z}`;
+                        const sourceRoomId = coordsToRoomId[sourceCoordStr];
+                        
+                        // --- Draw Rooms ---
+                        if (sourceRoomId) {
+                            if (visitedRooms.has(sourceRoomId)) {
+                                const sourceRoomData = roomRepository[sourceRoomId];
+                                const isPlayer = roomX === playerX && roomY === playerY;
+                                const char = isPlayer ? '@' : (sourceRoomData.mapChar || 'O');
+                                const color = isPlayer ? 'text-white font-bold' : (sourceRoomData.color || 'text-gray-300');
+                                mapData[displayX][displayY] = { char, color };
+                            } else {
+                                let isKnown = false;
+                                for (const dir in directionVectors) {
+                                    const vec = directionVectors[dir];
+                                    const neighborCoordStr = `${roomX - vec.x},${roomY - vec.y},${game.player.z}`;
+                                    const neighborRoomId = coordsToRoomId[neighborCoordStr];
+                                    if(neighborRoomId && visitedRooms.has(neighborRoomId)) {
+                                        const neighborRoom = roomRepository[neighborRoomId];
+                                        if(neighborRoom.exits && neighborRoom.exits[dir] === sourceRoomId) {
+                                            isKnown = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if(isKnown) {
+                                    mapData[displayX][displayY] = { char: '?', color: 'text-gray-600' };
+                                }
+                            }
+                        }
+
+                        // --- Draw Connections from Visited Rooms ---
+                        if (sourceRoomId && visitedRooms.has(sourceRoomId)) {
+                            const sourceRoomData = roomRepository[sourceRoomId];
+
+                            for (const dir in sourceRoomData.exits) {
+                                const targetRoomId = sourceRoomData.exits[dir];
+                                const targetRoomData = roomRepository[targetRoomId];
+                                if (!targetRoomData) continue;
+
+                                const oppositeDir = oppositeDirections[dir];
+                                const hasReturn = targetRoomData.exits && targetRoomData.exits[oppositeDir] === sourceRoomId;
+
+                                let connColor = 'text-gray-500'; // Default gray for unexplored
+                                if (visitedRooms.has(targetRoomId)) {
+                                    connColor = hasReturn ? 'text-gray-200' : 'text-yellow-500'; // White or Yellow
+                                }
+
+                                const vec = directionVectors[dir];
+                                if (!vec) continue;
+
+                                // Cardinal directions
+                                if ((dir === 'north' || dir === 'south') && displayY - vec.y > 0 && displayY - vec.y < gridHeight) {
+                                    mapData[displayX][displayY - vec.y] = { char: '|', color: connColor };
+                                }
+                                if ((dir === 'east' || dir === 'west') && displayX + vec.x > 0 && displayX + vec.x < gridWidth) {
+                                    for (let i = 1; i <= 3; i++) {
+                                        mapData[displayX + vec.x * i][displayY] = { char: '-', color: connColor };
+                                    }
+                                }
+                                // Diagonals
+                                if (dir === 'northwest' && displayY - 1 > 0 && displayX - 3 > 0) {
+                                    mapData[displayX - 3][displayY - 1] = { char: '\\', color: connColor };
+                                }
+                                if (dir === 'northeast' && displayY - 1 > 0 && displayX + 3 < gridWidth) {
+                                    mapData[displayX + 3][displayY - 1] = { char: '/', color: connColor };
+                                }
+                                if (dir === 'southwest' && displayY + 1 < gridHeight && displayX - 1 > 0) {
+                                    mapData[displayX - 1][displayY + 1] = { char: '/', color: connColor };
+                                }
+                                if (dir === 'southeast' && displayY + 1 < gridHeight && displayX + 1 < gridWidth) {
+                                    mapData[displayX + 1][displayY + 1] = { char: '\\', color: connColor };
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // --- Final Pass: Draw Red Connections Only If Player Is In The Room And There Is No Way Forward ---
+                const gridCenterX = Math.floor(gridWidth / 2);
+                const gridCenterY = Math.floor(gridHeight / 2);
+                const playerRoomId = game.player.currentRoomId;
+                const playerRoom = roomRepository[playerRoomId];
+
+                // Only do this for the player's current room
+                if (playerRoom && visitedRooms.has(playerRoomId)) {
+                    for (const dir in directionVectors) {
+                        const vec = directionVectors[dir];
+                        const neighborX = playerRoom.coords.x + vec.x;
+                        const neighborY = playerRoom.coords.y + vec.y;
+                        const neighborCoordStr = `${neighborX},${neighborY},${playerRoom.coords.z}`;
+                        const neighborRoomId = coordsToRoomId[neighborCoordStr];
+                        const neighborRoom = neighborRoomId ? roomRepository[neighborRoomId] : null;
+
+                        // Only if both rooms exist, have been visited, and there is a unidirectional exit from neighbor to player (not from player to neighbor)
+                        if (
+                            neighborRoomId &&
+                            neighborRoom &&
+                            visitedRooms.has(neighborRoomId) &&
+                            visitedRooms.has(playerRoomId) &&
+                            neighborRoom.exits &&
+                            neighborRoom.exits[oppositeDirections[dir]] === playerRoomId &&
+                            (!playerRoom.exits || playerRoom.exits[dir] !== neighborRoomId)
+                        ) {
+                            const connColor = 'text-red-500';
+                            // Cardinal directions
+                            if ((dir === 'north' || dir === 'south') && gridCenterY - vec.y >= 0 && gridCenterY - vec.y < gridHeight) {
+                                mapData[gridCenterX][gridCenterY - vec.y] = { char: '|', color: connColor };
+                            }
+                            if ((dir === 'east' || dir === 'west') && gridCenterX + vec.x > 0 && gridCenterX + vec.x < gridWidth) {
+                                for (let i = 1; i <= 3; i++) {
+                                    mapData[gridCenterX + vec.x * i][gridCenterY] = { char: '-', color: connColor };
+                                }
+                            }
+                            // Diagonals (XY order)
+                            if (dir === 'northwest' && gridCenterY - 1 >= 0 && gridCenterX - 3 >= 0) {
+                                mapData[gridCenterX - 3][gridCenterY - 1] = { char: '\\', color: connColor };
+                            }
+                            if (dir === 'northeast' && gridCenterY - 1 >= 0 && gridCenterX + 3 < gridWidth) {
+                                mapData[gridCenterX + 3][gridCenterY - 1] = { char: '/', color: connColor };
+                            }
+                            if (dir === 'southwest' && gridCenterY + 1 < gridHeight && gridCenterX - 1 >= 0) {
+                                mapData[gridCenterX - 1][gridCenterY + 1] = { char: '/', color: connColor };
+                            }
+                            if (dir === 'southeast' && gridCenterY + 1 < gridHeight && gridCenterX + 1 < gridWidth) {
+                                mapData[gridCenterX + 1][gridCenterY + 1] = { char: '\\', color: connColor };
+                            }
+                        }
+                    }
+                }
+
+                let html = '';
+                for (let displayY = 0; displayY < gridHeight; displayY++) {
+                    for (let displayX = 0; displayX < gridWidth; displayX++) {
+                        const cell = mapData[displayX][displayY];
+                        const safeChar = cell.char === ' ' ? '&nbsp;' : cell.char.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        html += `<span class="${cell.color}">${safeChar}</span>`;
+                    }
+                    html += '\n';
+                }
+                return html.slice(0, -1);
+            }
+        };
+
+        const commandRepository = {
+            look: function(args) {
+                const currentRoom = roomRepository[game.player.currentRoomId];
+                const roomColor = currentRoom.color || 'text-gray-300';
+                
+                printToOutput(currentRoom.name, `font-bold ${roomColor}`);
+                printToOutput(currentRoom.description, roomColor);
+
+                const availableExits = currentRoom.exits ? Object.keys(currentRoom.exits) : [];
+                const exitsString = availableExits.length > 0 
+                    ? `Exits are: ${availableExits.join(', ')}.` 
+                    : 'There are no obvious exits.';
+                printToOutput(exitsString, 'text-gray-400');
+            },
+            go: function(args) {
+                const direction = args[0];
+                if (!direction) return "Where do you want to go?";
+                
+                const currentRoom = roomRepository[game.player.currentRoomId];
+                const nextRoomId = currentRoom.exits ? currentRoom.exits[direction] : undefined;
+
+                if (nextRoomId && roomRepository[nextRoomId]) {
+                    const nextRoom = roomRepository[nextRoomId];
+                    game.player.currentRoomId = nextRoom.id;
+                    game.player.x = nextRoom.coords.x;
+                    game.player.y = nextRoom.coords.y;
+                    game.player.z = nextRoom.coords.z;
+                    
+                    visitedRooms.add(nextRoomId);
+                    
+                    updateMap();
+                    commandRepository.look([]); 
+                } else {
+                    return `You can't go that way.`;
+                }
+            },
+        };
+
+        const game = {
+            player: {
+                currentRoomId: 'room_0_0',
+                x: 0, y: 0, z: 0
+            },
+            mapRoomRadius: 3 
+        };
+    </script>
+
+    <!-- 
+    ============================================
+    MAIN SCRIPT - Handles UI and Input Parsing
+    ============================================
+    -->
+    <script>
+        const form = document.getElementById('command-form');
+        const input = document.getElementById('command-input');
+        const gameOutput = document.getElementById('game-output');
+        const mapContainer = document.getElementById('map-container');
+        
+        function printToOutput(text, className) {
+            const p = document.createElement('p');
+            p.textContent = text;
+            if (className) {
+                const classes = className.split(' ');
+                p.classList.add(...classes);
+            }
+            gameOutput.appendChild(p);
+            gameOutput.scrollTop = gameOutput.scrollHeight;
+        }
+
+        function updateMap() {
+            document.getElementById('coord-x').textContent = game.player.x;
+            document.getElementById('coord-y').textContent = game.player.y;
+            document.getElementById('coord-z').textContent = game.player.z;
+
+            const mapHtml = mapRenderer.render(game.player.x, game.player.y, game.mapRoomRadius);
+            mapContainer.innerHTML = mapHtml;
+            
+            document.querySelectorAll('.map-size-btn').forEach(btn => btn.classList.remove('active'));
+            if(game.mapRoomRadius === 1) document.getElementById('map-size-s').classList.add('active');
+            if(game.mapRoomRadius === 2) document.getElementById('map-size-m').classList.add('active');
+            if(game.mapRoomRadius === 3) document.getElementById('map-size-l').classList.add('active');
+        }
+
+        function parseCommand(rawText) {
+            const commandAliases = { 'l': 'look' };
+            const directionAliases = {
+                'n': 'north', 's': 'south', 'e': 'east', 'w': 'west',
+                'ne': 'northeast', 'nw': 'northwest', 'se': 'southeast', 'sw': 'southwest',
+                'u': 'up', 'd': 'down'
+            };
+
+            let commandText = commandAliases[rawText] || rawText;
+            const potentialDirection = directionAliases[commandText] || rawText;
+
+            if (directionVectors[potentialDirection]) {
+                commandText = `go ${potentialDirection}`;
+            }
+
+            const parts = commandText.split(' ');
+            return { action: parts[0], args: parts.slice(1) };
+        }
+
+        form.addEventListener('submit', (event) => {
+            event.preventDefault();
+            const commandText = input.value.trim().toLowerCase();
+            if (commandText === '') return;
+
+            printToOutput('> ' + commandText, 'text-cyan-300');
+
+            const { action, args } = parseCommand(commandText);
+
+            if (commandRepository[action]) {
+                const response = commandRepository[action](args);
+                if(response) {
+                    printToOutput(response);
+                }
+            } else {
+                printToOutput(`I don't understand "${commandText}".`);
+            }
+
+            input.value = '';
+        });
+        
+        function init() {
+            const { errors, warnings } = validateWorld(game.player.currentRoomId);
+            if (errors.length > 0) {
+                printToOutput('--- WORLD ERRORS ---', 'text-red-500 font-bold');
+                errors.forEach(err => printToOutput(err, 'text-red-400'));
+            }
+            if (warnings.length > 0) {
+                printToOutput('--- WORLD WARNINGS ---', 'text-yellow-500 font-bold');
+                warnings.forEach(warn => printToOutput(warn, 'text-yellow-400'));
+            }
+            if(errors.length > 0 || warnings.length > 0) {
+                 printToOutput('--------------------', 'text-gray-500');
+            }
+
+            document.getElementById('map-size-s').addEventListener('click', () => { game.mapRoomRadius = 1; updateMap(); });
+            document.getElementById('map-size-m').addEventListener('click', () => { game.mapRoomRadius = 2; updateMap(); });
+            document.getElementById('map-size-l').addEventListener('click', () => { game.mapRoomRadius = 3; updateMap(); });
+
+            const startRoom = roomRepository[game.player.currentRoomId];
+            if(startRoom) {
+                game.player.x = startRoom.coords.x;
+                game.player.y = startRoom.coords.y;
+                game.player.z = startRoom.coords.z;
+                visitedRooms.add(game.player.currentRoomId);
+            }
+            
+            printToOutput('Welcome, adventurer.');
+            commandRepository.look([]); 
+            updateMap(); 
+            input.focus();
+        }
+        
+        init();
+
+    </script>
+</body>
+</html>
