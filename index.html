@@ -49,7 +49,7 @@
             transform: translateY(-4px);
         }
 
-        /* --- New Animation for the Highlight --- */
+        /* --- Animation for the Highlight --- */
         @keyframes pulse-border {
             0% {
                 box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.7);
@@ -62,10 +62,32 @@
             }
         }
 
+        /* --- New Animation for Pop-in Effect --- */
+        @keyframes pop-in {
+            0% {
+                transform: scale(0.5);
+                opacity: 0;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .pop-in-animation {
+            animation: pop-in 0.3s ease-out forwards;
+        }
+
         /* Style for the highlighted/selected item */
         .highlighted {
             transform: scale(1.05) translateY(-8px); /* Slightly larger and more lifted */
             animation: pulse-border 1.5s infinite; /* Apply the new animation */
+        }
+        
+        /* New style for highlighting selected statuses in the modal */
+        .symbol-selected {
+            background-color: #dbeafe; /* A light blue background */
+            border: 2px solid #60a5fa; /* A slightly darker blue border */
         }
     </style>
 </head>
@@ -231,21 +253,17 @@
                 
                 try {
                     // Use a regex to ensure the expression only contains safe characters.
-                    // This allows numbers, +, -, and whitespace.
                     const validExpressionRegex = /^[0-9+\-\s]+$/;
                     if (!validExpressionRegex.test(expression)) {
                         throw new Error("Invalid characters in expression");
                     }
                     
-                    // Find all numbers, which can be preceded by an optional + or -
-                    // This correctly handles "12 - 5", "-6", and "7"
                     const numbers = expression.match(/[+\-]?\s*\d+/g);
                     
                     if (!numbers) {
                         throw new Error("No numbers found in expression");
                     }
 
-                    // Safely sum up the parts of the expression
                     const result = numbers.reduce((total, numStr) => {
                         return total + parseInt(numStr.replace(/\s/g, ''), 10);
                     }, 0);
@@ -253,7 +271,6 @@
                     newHp = result;
 
                 } catch (error) {
-                    // If there's any error in parsing, revert to the original value.
                     console.error("HP calculation error:", error);
                     newHp = originalHp;
                 }
@@ -261,24 +278,20 @@
                 hpSpan.textContent = newHp;
             };
             
-            // Resolve on blur (clicking away)
             hpSpan.addEventListener('blur', resolveHp);
 
-            // Resolve on Enter key, revert on Escape
             hpSpan.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
-                    e.preventDefault(); // Prevent new line in contenteditable
+                    e.preventDefault();
                     resolveHp();
-                    hpSpan.blur(); // Unfocus the element to signify completion
+                    hpSpan.blur();
                 } else if (e.key === 'Escape') {
-                    // Revert to original value on escape
                     hpSpan.textContent = hpSpan.dataset.originalHp;
                     hpSpan.blur();
                 }
             });
         }
         
-        // --- Initialize functionalities for all existing items ---
         document.querySelectorAll('.draggable').forEach(item => {
             initializeDraggable(item);
             initializeSelectable(item);
@@ -328,7 +341,6 @@
                     </div>
                 </div>
                 <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2">
-                    <!-- Status icons will go here -->
                 </div>
             `;
 
@@ -341,22 +353,38 @@
                  statusContainer.appendChild(statusIcon);
             });
             
-            // Initialize the new HP field logic
             const hpSpan = newItem.querySelector('.text-2xl.font-mono');
             initializeHpField(hpSpan);
 
             initializeDraggable(newItem);
             initializeSelectable(newItem);
+            
+            // Add to DOM and then animate
             shelf.appendChild(newItem);
+            newItem.classList.add('pop-in-animation');
+            newItem.addEventListener('animationend', () => {
+                newItem.classList.remove('pop-in-animation');
+            }, { once: true });
         }
 
         // --- Modal Logic ---
-        function populateSymbolModal() {
+        function populateSymbolModal(selectedItem) {
             symbolGrid.innerHTML = '';
+            
+            // Get currently applied statuses for the selected character
+            const statusContainer = selectedItem.querySelector('.status-container');
+            const appliedIcons = statusContainer.querySelectorAll('span');
+            const appliedStatuses = new Set(Array.from(appliedIcons).map(icon => icon.textContent));
+
             statusSymbols.forEach((symbol, index) => {
                 const symbolButton = document.createElement('button');
                 symbolButton.className = "relative text-3xl p-4 rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500";
                 
+                // Highlight the button if the status is already applied
+                if (appliedStatuses.has(symbol)) {
+                    symbolButton.classList.add('symbol-selected');
+                }
+
                 const displayNumber = (index + 1) % 10;
                 
                 symbolButton.innerHTML = `
@@ -365,29 +393,27 @@
                 `;
                 
                 symbolButton.addEventListener('click', () => {
-                    const selectedItem = document.querySelector('.highlighted');
-                    if (selectedItem) {
-                        const statusContainer = selectedItem.querySelector('.status-container');
-                        const existingIcons = statusContainer.querySelectorAll('span');
-                        let existingIcon = null;
+                    symbolButton.classList.toggle('symbol-selected'); // Toggle highlight immediately
 
-                        existingIcons.forEach(icon => {
-                            if (icon.textContent === symbol) {
-                                existingIcon = icon;
-                            }
-                        });
-
-                        if (existingIcon) {
-                            existingIcon.remove();
-                        } else {
-                            const statusIcon = document.createElement('span');
-                            statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer";
-                            statusIcon.textContent = symbol;
-                            statusIcon.addEventListener('click', () => statusIcon.remove());
-                            statusContainer.appendChild(statusIcon);
+                    const existingIcons = statusContainer.querySelectorAll('span');
+                    let existingIcon = null;
+                    existingIcons.forEach(icon => {
+                        if (icon.textContent === symbol) {
+                            existingIcon = icon;
                         }
+                    });
+
+                    if (existingIcon) {
+                        // If it exists, remove it from the character card
+                        existingIcon.remove();
+                    } else {
+                        // If it doesn't exist, add it to the character card
+                        const statusIcon = document.createElement('span');
+                        statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer";
+                        statusIcon.textContent = symbol;
+                        statusIcon.addEventListener('click', () => statusIcon.remove());
+                        statusContainer.appendChild(statusIcon);
                     }
-                    statusModal.classList.add('hidden');
                 });
                 symbolGrid.appendChild(symbolButton);
             });
@@ -398,7 +424,11 @@
                 statusModal.classList.add('hidden');
             } else {
                 if (!addStatusButton.disabled) {
-                    statusModal.classList.remove('hidden');
+                    const selectedItem = document.querySelector('.highlighted');
+                    if (selectedItem) {
+                        populateSymbolModal(selectedItem); // Repopulate based on current selection
+                        statusModal.classList.remove('hidden');
+                    }
                 }
             }
         }
@@ -435,23 +465,79 @@
         copyButton.addEventListener('click', () => {
             const original = document.querySelector('.highlighted');
             if (original) {
+                const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
                 const clone = original.cloneNode(true);
                 clone.classList.remove('highlighted');
+                let insertionPoint = original; // Default insertion point
+
+                if (originalName === '') {
+                    // Case 1: Name is empty. Do nothing to the name. Insert after original.
+                } else {
+                    // Case 2: Name is not empty. Proceed with numbering and sorting logic.
+                    const allNameSpans = document.querySelectorAll('#shelf-items .font-bold.text-lg');
+                    const allNames = Array.from(allNameSpans).map(span => span.textContent.trim());
+                    let newName;
+
+                    const getNextName = (currentName) => {
+                        const match = currentName.match(/(.+) (\d+)$/);
+                        if (match && match[1] && match[2]) {
+                            const baseName = match[1];
+                            const number = parseInt(match[2], 10);
+                            return `${baseName} ${number + 1}`;
+                        } else {
+                            return `${currentName} 2`;
+                        }
+                    };
+
+                    newName = getNextName(originalName);
+                    while (allNames.includes(newName)) {
+                        newName = getNextName(newName);
+                    }
+                    
+                    clone.querySelector('.font-bold.text-lg').textContent = newName;
+
+                    // Find the correct insertion point
+                    const newNameMatch = newName.match(/(.+) (\d+)$/);
+                    if (newNameMatch) {
+                        const baseName = newNameMatch[1];
+                        const newNumber = parseInt(newNameMatch[2], 10);
+                        let highestFoundNumber = -1;
+                        let elementToInsertAfter = null;
+
+                        allNameSpans.forEach(span => {
+                            const name = span.textContent.trim();
+                            const siblingMatch = name.match(/(.+) (\d+)$/);
+                            if (siblingMatch && siblingMatch[1] === baseName) {
+                                const siblingNumber = parseInt(siblingMatch[2], 10);
+                                if (siblingNumber < newNumber && siblingNumber > highestFoundNumber) {
+                                    highestFoundNumber = siblingNumber;
+                                    elementToInsertAfter = span.closest('.draggable');
+                                }
+                            }
+                        });
+                        
+                        if (elementToInsertAfter) {
+                            insertionPoint = elementToInsertAfter;
+                        }
+                    }
+                }
                 
+                insertionPoint.after(clone);
+                
+                // Add pop-in animation
+                clone.classList.add('pop-in-animation');
+                clone.addEventListener('animationend', () => {
+                    clone.classList.remove('pop-in-animation');
+                }, { once: true });
+
+                // Initialize clone's functionality
                 initializeDraggable(clone);
                 initializeSelectable(clone);
-
-                // Re-add event listener to the editable HP field in the clone
                 const hpSpanClone = clone.querySelector('.text-2xl.font-mono');
                 initializeHpField(hpSpanClone);
-
-
-                // Re-add event listeners to status icons in the clone
                 clone.querySelectorAll('.status-container span').forEach(icon => {
                     icon.addEventListener('click', () => icon.remove());
                 });
-
-                original.after(clone);
             }
         });
 
@@ -467,13 +553,8 @@
         
         document.addEventListener('keydown', (event) => {
             const activeElement = document.activeElement;
-            if (activeElement.getAttribute('contenteditable') === 'true' && activeElement.classList.contains('font-mono')) {
-                 // Special handling for HP field is inside initializeHpField, so we just stop here.
-                 return;
-            }
             if (activeElement.getAttribute('contenteditable') === 'true') {
-                // For other editable fields (like name), we also stop here.
-                return;
+                 return;
             }
             
             if (!statusModal.classList.contains('hidden') && event.code.startsWith('Digit')) {
@@ -494,11 +575,11 @@
                     event.preventDefault();
                     handleStatusModalToggle();
                     break;
-                case 'KeyC': // Shortcut for Copy
+                case 'KeyC':
                     event.preventDefault();
                     if (!copyButton.disabled) copyButton.click();
                     break;
-                case 'KeyX': // Shortcut for Clear Statuses
+                case 'KeyX':
                     event.preventDefault();
                     if (!clearStatusesButton.disabled) clearStatusesButton.click();
                     break;
@@ -522,7 +603,7 @@
             createCharacter('Hector the Well-Endowed', 18, ['⚡️']);
         }
         
-        populateSymbolModal();
+        // populateSymbolModal(); // No longer needed here
         initializeDefaultScene();
 
     </script>
