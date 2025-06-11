@@ -299,6 +299,9 @@
              <div id="compendium-shelf-inner-wrapper">
                 <div id="compendium-shelf-inner"></div>
              </div>
+             <div class="p-2 border-t border-gray-300">
+                <button id="manage-compendium-data-btn" class="w-full bg-gray-500 text-white font-bold py-2 px-4 rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400">Manage Data</button>
+             </div>
         </div>
     </div>
 
@@ -326,6 +329,17 @@
             <div id="notes-content-editable" contenteditable="true" class="flex-grow overflow-y-auto p-4 border border-gray-300 rounded-md bg-gray-50">
                 <!-- Rich text content goes here -->
             </div>
+        </div>
+    </div>
+
+    <!-- Compendium Data Modal -->
+    <div id="compendium-data-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-2xl p-6 w-full max-w-2xl h-full max-h-[80vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 flex-shrink-0">
+                <h2 class="text-xl font-bold text-gray-800">Compendium Data (Import/Export)</h2>
+                <button id="close-compendium-data-modal-btn" class="bg-green-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-green-600 focus:outline-none">Done</button>
+            </div>
+            <textarea id="compendium-data-textarea" class="flex-grow w-full p-2 border border-gray-300 rounded-md bg-gray-50 font-mono text-sm"></textarea>
         </div>
     </div>
 
@@ -362,6 +376,10 @@
         const hideHpButton = document.getElementById('hide-hp-btn');
         const compendiumContainer = document.getElementById('compendium-container');
         const compendiumHandle = document.getElementById('compendium-handle');
+        const manageCompendiumDataBtn = document.getElementById('manage-compendium-data-btn');
+        const compendiumDataModal = document.getElementById('compendium-data-modal');
+        const closeCompendiumDataModalBtn = document.getElementById('close-compendium-data-modal-btn');
+        const compendiumDataTextarea = document.getElementById('compendium-data-textarea');
 
 
         // --- Data ---
@@ -1178,6 +1196,74 @@
             e.target.value = null; 
         });
 
+        manageCompendiumDataBtn.addEventListener('click', () => {
+            const compendiumItems = Array.from(compendiumShelfInner.children);
+            const exportData = compendiumItems.map(item => {
+                let imageKey = item.dataset.bgImageKey || '';
+                // Strip non-portable indexedDB keys
+                if (imageKey.startsWith('indexeddb://')) {
+                    imageKey = '';
+                }
+
+                return {
+                    name: item.querySelector('.font-bold.text-lg').textContent.trim(),
+                    hp: item.querySelector('.current-hp').textContent.trim(),
+                    totalHp: item.querySelector('.total-hp').textContent.trim(),
+                    statuses: Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent),
+                    bgColor: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
+                    bgImageKey: imageKey,
+                    notes: item.dataset.notes || ''
+                };
+            });
+
+            const jsonString = JSON.stringify(exportData, null, 2);
+            compendiumDataTextarea.value = jsonString;
+            compendiumDataTextarea.dataset.originalValue = jsonString;
+            compendiumDataModal.classList.remove('hidden');
+        });
+
+        closeCompendiumDataModalBtn.addEventListener('click', () => {
+            const currentJson = compendiumDataTextarea.value;
+            const originalJson = compendiumDataTextarea.dataset.originalValue;
+
+            if (currentJson !== originalJson) {
+                try {
+                    const importData = JSON.parse(currentJson);
+                    if (!Array.isArray(importData)) throw new Error("Data must be an array.");
+
+                    // Clear existing compendium
+                    compendiumShelfInner.innerHTML = '';
+                    
+                    // Import new data
+                    importData.forEach(charData => {
+                        createCharacter(
+                            charData.name,
+                            charData.hp,
+                            charData.totalHp,
+                            charData.statuses,
+                            charData.notes,
+                            {
+                                parent: compendiumShelfInner,
+                                backgroundColorClass: charData.bgColor,
+                                backgroundImage: charData.bgImageKey, // It's a URL if it exists
+                                bgImageKey: charData.bgImageKey
+                            }
+                        );
+                    });
+                    
+                    refreshCompendiumLayout();
+                    saveState();
+
+                } catch (e) {
+                    console.error("Failed to import compendium data:", e);
+                    // Optionally, show a more user-friendly error message here
+                }
+            }
+
+            compendiumDataModal.classList.add('hidden');
+        });
+
+
         // --- Button & Keyboard Logic ---
         lastTurnButton.addEventListener('click', () => {
             const lastItem = shelf.querySelector('.draggable:last-child');
@@ -1331,7 +1417,7 @@
         let isSelecting = false;
         let startX, startY;
         document.body.addEventListener('mousedown', (e) => {
-            if (e.target.closest('.draggable, #compendium-container, #status-modal, #notes-modal, #context-menu, #main-button-container')) return;
+            if (e.target.closest('.draggable, #compendium-container, #status-modal, #notes-modal, #context-menu, #main-button-container, #compendium-data-modal')) return;
             e.preventDefault();
             isSelecting = true;
             startX = e.clientX; startY = e.clientY;
@@ -1368,7 +1454,7 @@
             const isNotesModalOpen = !notesModal.classList.contains('hidden');
             const isStatusModalOpen = !statusModal.classList.contains('hidden');
             const isContextMenuOpen = !contextMenu.classList.contains('hidden');
-            const activeElementIsEditable = document.activeElement.getAttribute('contenteditable') === 'true' || document.activeElement === imageUrlInput || document.activeElement === compendiumSearch;
+            const activeElementIsEditable = document.activeElement.getAttribute('contenteditable') === 'true' || document.activeElement === imageUrlInput || document.activeElement === compendiumSearch || document.activeElement === compendiumDataTextarea;
 
             if (event.key === 'Escape') {
                 if (isNotesModalOpen) return closeNotesModal();
