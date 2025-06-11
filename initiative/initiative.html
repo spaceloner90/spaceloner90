@@ -15,6 +15,7 @@
         body {
             font-family: 'Inter', sans-serif;
             user-select: none; /* Prevent text selection during drag operations */
+            padding-right: 40px; /* Make space for the collapsed compendium handle */
         }
         /* Style for the contenteditable fields to give user feedback */
         [contenteditable]:focus {
@@ -131,6 +132,56 @@
             list-style: decimal;
             margin-left: 20px;
         }
+
+        /* --- Compendium Shelf Styles --- */
+        #compendium-container {
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 300px;
+            z-index: 40; /* Below modals */
+            transform: translateX(260px);
+            transition: transform 0.3s ease-in-out;
+            display: flex;
+            align-items: center;
+        }
+        #compendium-container.is-open {
+            transform: translateX(0);
+        }
+        #compendium-handle {
+            width: 40px;
+            height: 120px;
+            background-color: #374151; /* gray-700 */
+            border-top-left-radius: 1rem;
+            border-bottom-left-radius: 1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #compendium-handle span {
+            writing-mode: vertical-rl;
+            transform: rotate(180deg);
+            color: white;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        #compendium-shelf {
+            width: 260px;
+            height: 100%;
+            background-color: #f3f4f6; /* gray-100 */
+            border-left: 1px solid #d1d5db; /* gray-300 */
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-content: flex-start;
+            gap: 1rem;
+        }
+
     </style>
 </head>
 <body class="bg-gray-100">
@@ -176,7 +227,7 @@
         </div>
 
         <!-- Button Container -->
-        <div class="mt-8 text-center space-y-4">
+        <div id="main-button-container" class="mt-8 text-center space-y-4">
             <div class="space-x-4">
                 <button id="move-item-btn" class="bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-300 transition-all duration-200">
                     Next Turn (SPACE)
@@ -217,6 +268,17 @@
             </div>
         </div>
     </div>
+    
+    <!-- NEW: Compendium Shelf HTML -->
+    <div id="compendium-container">
+        <div id="compendium-handle">
+            <span>Compendium</span>
+        </div>
+        <div id="compendium-shelf">
+            <!-- Compendium characters will be populated here -->
+        </div>
+    </div>
+
 
     <!-- Status Symbol Modal -->
     <div id="status-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -256,6 +318,7 @@
         const addStatusButton = document.getElementById('add-status-btn');
         const clearStatusesButton = document.getElementById('clear-statuses-btn');
         const shelf = document.getElementById('shelf-items');
+        const compendiumShelf = document.getElementById('compendium-shelf');
         const statusModal = document.getElementById('status-modal');
         const closeModalButton = document.getElementById('close-modal-btn');
         const symbolGrid = document.getElementById('symbol-grid');
@@ -272,6 +335,8 @@
         const notesTitle = document.getElementById('notes-title');
         const notesContentEditable = document.getElementById('notes-content-editable');
         const hideHpButton = document.getElementById('hide-hp-btn');
+        const compendiumContainer = document.getElementById('compendium-container');
+        const compendiumHandle = document.getElementById('compendium-handle');
 
 
         // --- Data ---
@@ -369,14 +434,18 @@
         // --- LocalStorage Persistence ---
         function saveState() {
             try {
-                const order = [];
-                const currentIds = new Set();
-                
-                Array.from(shelf.children).forEach(item => {
-                    const id = item.id;
-                    order.push(id);
-                    currentIds.add(id);
+                // Save Initiative Order
+                const initiativeOrder = Array.from(shelf.children).map(item => item.id);
+                localStorage.setItem('initiativeOrder', JSON.stringify(initiativeOrder));
 
+                // Save Compendium Order
+                const compendiumOrder = Array.from(compendiumShelf.children).map(item => item.id);
+                localStorage.setItem('compendiumOrder', JSON.stringify(compendiumOrder));
+
+                // Save individual item data from both shelves
+                const allItems = [...shelf.children, ...compendiumShelf.children];
+                allItems.forEach(item => {
+                    const id = item.id;
                     let itemData;
                     if (item.classList.contains('character-card')) {
                         const nameSpan = item.querySelector('.font-bold.text-lg');
@@ -402,21 +471,20 @@
                             turn: turnCounter ? turnCounter.textContent.trim() : '1'
                         };
                     }
-                    localStorage.setItem(id, JSON.stringify(itemData));
+                    if (itemData) {
+                        localStorage.setItem(id, JSON.stringify(itemData));
+                    }
                 });
 
-                localStorage.setItem('initiativeOrder', JSON.stringify(order));
                 localStorage.setItem('isHpHidden', JSON.stringify(isHpHidden));
                 
                 // Cleanup orphaned items
-                const savedOrder = JSON.parse(localStorage.getItem('initiativeOrder')) || [];
-                const savedIdSet = new Set(savedOrder);
-
-                for (let i = 0; i < localStorage.length; i++) {
+                const allIds = new Set([...initiativeOrder, ...compendiumOrder]);
+                 for (let i = 0; i < localStorage.length; i++) {
                     const key = localStorage.key(i);
-                    if (key !== 'initiativeOrder' && key !== 'isHpHidden' && !savedIdSet.has(key)) {
+                    if ((key.startsWith('char-') || key.startsWith('turn-marker-')) && !allIds.has(key)) {
                         localStorage.removeItem(key);
-                        i--; // Adjust index after removal
+                        i--; 
                     }
                 }
                 console.log('State saved to localStorage.');
@@ -425,57 +493,61 @@
             }
         }
         
+        async function loadItemsToShelf(orderKey, targetShelf) {
+            const orderJSON = localStorage.getItem(orderKey);
+            if (!orderJSON) return;
+
+            const order = JSON.parse(orderJSON);
+            const itemPromises = order.map(async (id) => {
+                const itemJSON = localStorage.getItem(id);
+                if (!itemJSON) return null;
+                
+                const itemData = JSON.parse(itemJSON);
+                
+                let bgImageUrl = '';
+                if (itemData.bgImageKey && itemData.bgImageKey.startsWith('indexeddb://')) {
+                    const blob = await loadImageFromIndexedDB(itemData.bgImageKey).catch(e => console.error(e));
+                    if(blob) bgImageUrl = URL.createObjectURL(blob);
+                } else if (itemData.bgImageKey) {
+                    bgImageUrl = itemData.bgImageKey;
+                }
+
+                itemData.bgImageUrl = bgImageUrl;
+                return { id, data: itemData };
+            });
+
+            const loadedItems = await Promise.all(itemPromises);
+
+            loadedItems.forEach(item => {
+                if (!item) return;
+                const { id, data } = item;
+                const options = {
+                    id: id,
+                    parent: targetShelf,
+                    backgroundColorClass: data.bgColor,
+                    backgroundImage: data.bgImageUrl,
+                    bgImageKey: data.bgImageKey
+                };
+                if (data.type === 'turnMarker') {
+                    createTurnMarker(id, data.turn); // Turn marker always goes to main shelf
+                } else if (data.type === 'character') {
+                    createCharacter(data.name, data.hp, data.totalHp || data.hp, data.statuses, data.notes, options);
+                }
+            });
+        }
+
         async function loadState() {
-            const orderJSON = localStorage.getItem('initiativeOrder');
-            if (!orderJSON) return false;
+            const hasInitiative = localStorage.getItem('initiativeOrder');
+            const hasCompendium = localStorage.getItem('compendiumOrder');
+            if (!hasInitiative && !hasCompendium) return false;
 
             try {
-                const order = JSON.parse(orderJSON);
-                shelf.innerHTML = ''; 
-                colorIndex = 0; // Reset color index on load
+                shelf.innerHTML = '';
+                compendiumShelf.innerHTML = '';
+                colorIndex = 0;
 
-                const itemPromises = order.map(async (id) => {
-                    const itemJSON = localStorage.getItem(id);
-                    if (!itemJSON) return null;
-                    
-                    const itemData = JSON.parse(itemJSON);
-                    
-                    let bgImageUrl = '';
-                    if (itemData.bgImageKey && itemData.bgImageKey.startsWith('indexeddb://')) {
-                        const blob = await loadImageFromIndexedDB(itemData.bgImageKey).catch(e => console.error(e));
-                        if(blob) bgImageUrl = URL.createObjectURL(blob);
-                    } else if (itemData.bgImageKey) {
-                        bgImageUrl = itemData.bgImageKey;
-                    }
-
-                    itemData.bgImageUrl = bgImageUrl; // Attach the resolved URL
-                    return { id, data: itemData };
-                });
-
-                const loadedItems = await Promise.all(itemPromises);
-
-                loadedItems.forEach(item => {
-                    if (!item) return;
-                    const { id, data } = item;
-                    if (data.type === 'turnMarker') {
-                        createTurnMarker(id, data.turn);
-                    } else if (data.type === 'character') {
-                        const options = {
-                            id: id,
-                            backgroundColorClass: data.bgColor,
-                            backgroundImage: data.bgImageUrl,
-                            bgImageKey: data.bgImageKey
-                        };
-                        createCharacter(
-                            data.name, 
-                            data.hp, 
-                            data.totalHp || data.hp, // Fallback for old data
-                            data.statuses,
-                            data.notes, 
-                            options
-                        );
-                    }
-                });
+                await loadItemsToShelf('initiativeOrder', shelf);
+                await loadItemsToShelf('compendiumOrder', compendiumShelf);
 
                 console.log('State loaded from localStorage.');
                 updateActionButtonsState();
@@ -485,6 +557,7 @@
                 return false;
             }
         }
+
 
         // --- Core Functions for Item States ---
 
@@ -525,10 +598,60 @@
                     document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
                     item.classList.add('highlighted');
                 }
-                setTimeout(() => item.classList.add('dragging'), 0)
+                item.dataset.originalParentId = item.parentElement.id;
+                item.dataset.originalNextSiblingId = item.nextSibling ? item.nextSibling.id : 'null';
+                setTimeout(() => item.classList.add('dragging'), 0);
             });
+
             item.addEventListener('dragend', () => {
                 item.classList.remove('dragging');
+                const newParent = item.parentElement;
+                const originalParentId = item.dataset.originalParentId;
+
+                // Check for cross-shelf drag (and that it's not the turn marker)
+                if (newParent && originalParentId && newParent.id !== originalParentId && !item.id.startsWith('turn-marker')) {
+                    // It's a copy operation. The moved `item` is the new copy.
+                    // We need to recreate the original.
+                    const originalItemData = {
+                        name: item.querySelector('.font-bold.text-lg').textContent.trim(),
+                        hp: item.querySelector('.current-hp').textContent.trim(),
+                        totalHp: item.querySelector('.total-hp').textContent.trim(),
+                        statuses: Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent),
+                        notes: item.dataset.notes || '',
+                        backgroundColorClass: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
+                        backgroundImage: item.style.backgroundImage.slice(5, -2).replace(/["']/g, ""),
+                        bgImageKey: item.dataset.bgImageKey || '',
+                        id: item.id // Keep the original ID for the recreated item
+                    };
+
+                    // Give the moved item a new ID, making it officially the copy
+                    item.id = `char-${crypto.randomUUID()}`;
+
+                    const originalParent = document.getElementById(originalParentId);
+                    const originalNextSiblingId = item.dataset.originalNextSiblingId;
+                    const originalNextSibling = (originalNextSiblingId && originalNextSiblingId !== 'null') ? document.getElementById(originalNextSiblingId) : null;
+
+                    // Recreate the original item in its old spot
+                    createCharacter(
+                        originalItemData.name,
+                        originalItemData.hp,
+                        originalItemData.totalHp,
+                        originalItemData.statuses,
+                        originalItemData.notes,
+                        {
+                            id: originalItemData.id,
+                            backgroundColorClass: originalItemData.backgroundColorClass,
+                            backgroundImage: originalItemData.backgroundImage,
+                            bgImageKey: originalItemData.bgImageKey,
+                            parent: originalParent,
+                            insertBeforeSibling: originalNextSibling
+                        }
+                    );
+                }
+
+                delete item.dataset.originalParentId;
+                delete item.dataset.originalNextSiblingId;
+
                 saveState(); 
             });
         }
@@ -603,27 +726,36 @@
                 contextMenu.classList.remove('hidden');
             });
         }
+        
+        [shelf, compendiumShelf].forEach(container => {
+            container.addEventListener('dragover', e => {
+                e.preventDefault();
+                const draggingItem = document.querySelector('.dragging');
+                if (!draggingItem) return;
 
-        shelf.addEventListener('dragover', e => {
-            e.preventDefault();
-            const draggingItem = document.querySelector('.dragging');
-            if (!draggingItem) return;
-
-            const afterElement = getDragAfterElement(shelf, e.clientX, e.clientY);
-            if (afterElement == null) shelf.appendChild(draggingItem);
-            else shelf.insertBefore(draggingItem, afterElement);
+                const afterElement = getDragAfterElement(container, e.clientX, e.clientY);
+                if (afterElement == null) {
+                    container.appendChild(draggingItem);
+                } else {
+                    container.insertBefore(draggingItem, afterElement);
+                }
+            });
         });
 
         function getDragAfterElement(container, x, y) {
             const draggableElements = [...container.querySelectorAll('.draggable:not(.dragging)')];
             return draggableElements.reduce((closest, child) => {
                 const box = child.getBoundingClientRect();
-                if (y > box.top && y < box.bottom) {
-                    const offset = x - box.left - box.width / 2;
-                    if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
+                const offsetY = y - box.top - box.height / 2;
+                const offsetX = x - box.left - box.width / 2;
+
+                if (offsetY < 0 && offsetY > closest.offset.y) {
+                     return { offset: { x: offsetX, y: offsetY }, element: child };
+                } else if (offsetX < 0 && offsetX > closest.offset.x && offsetY >= 0 && offsetY < box.height) {
+                     return { offset: { x: offsetX, y: offsetY }, element: child };
                 }
                 return closest;
-            }, { offset: Number.NEGATIVE_INFINITY }).element;
+            }, { offset: {x: Number.NEGATIVE_INFINITY, y: Number.NEGATIVE_INFINITY} }).element;
         }
 
         // --- HP Display Logic ---
@@ -664,7 +796,8 @@
         function createCharacter(name, hp, totalHp, statuses = [], notes = '', options = {}) {
             const { 
                 id = null, insertionElement = null, backgroundColorClass = null, 
-                backgroundImage = '', bgImageKey = ''
+                backgroundImage = '', bgImageKey = '', parent = shelf,
+                insertBeforeSibling = null
             } = options;
 
             const newItem = document.createElement('div');
@@ -719,8 +852,13 @@
             initializeSelectable(newItem);
             initializeContextMenu(newItem);
             
-            if(insertionElement) insertionElement.after(newItem);
-            else shelf.appendChild(newItem);
+            if (insertBeforeSibling) {
+                parent.insertBefore(newItem, insertBeforeSibling);
+            } else if (insertionElement) {
+                insertionElement.after(newItem);
+            } else {
+                parent.appendChild(newItem);
+            }
 
             if (!options.id) { // Only animate and save if it's a newly created item
                 newItem.classList.add('pop-in-animation');
@@ -925,12 +1063,13 @@
             if (originals.length === 0) return;
 
             originals.forEach(original => {
+                const parentShelf = original.closest('#shelf-items, #compendium-shelf');
                 const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
                 
                 const nameMatch = originalName.match(/(.+) (\d+)$/);
                 const baseName = nameMatch ? nameMatch[1] : originalName;
 
-                const allCharacters = Array.from(shelf.querySelectorAll('.character-card'));
+                const allCharacters = Array.from(document.querySelectorAll('.character-card'));
                 let highestNumber = 0;
                 let insertionTarget = original;
 
@@ -942,11 +1081,15 @@
                             const currentNum = parseInt(charMatch[1], 10);
                             if (currentNum > highestNumber) {
                                 highestNumber = currentNum;
-                                insertionTarget = char;
+                                if (char.parentElement === parentShelf) {
+                                    insertionTarget = char;
+                                }
                             }
                         } else if (highestNumber === 0) {
                             highestNumber = 1;
-                            insertionTarget = char;
+                            if (char.parentElement === parentShelf) {
+                                insertionTarget = char;
+                            }
                         }
                     }
                 });
@@ -962,6 +1105,7 @@
                 const bgStyle = original.style.backgroundImage;
 
                 const options = { 
+                    parent: parentShelf,
                     insertionElement: insertionTarget,
                     backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/['"]/g, '') : '',
                     bgImageKey: bgImageKey
@@ -999,13 +1143,18 @@
                 store.clear();
             }
             shelf.innerHTML = ''; 
+            compendiumShelf.innerHTML = '';
             await initializeApp();
+        });
+
+        compendiumHandle.addEventListener('click', () => {
+            compendiumContainer.classList.toggle('is-open');
         });
 
         let isSelecting = false;
         let startX, startY;
-        shelf.addEventListener('mousedown', (e) => {
-            if (e.target.closest('.draggable')) return;
+        document.body.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.draggable, #compendium-container, #status-modal, #notes-modal, #context-menu, #main-button-container')) return;
             e.preventDefault();
             isSelecting = true;
             startX = e.clientX; startY = e.clientY;
@@ -1098,6 +1247,10 @@
             createCharacter('Goblin 2', 7, 7, [], goblinNotes, goblinOptions);
             createCharacter('Goblin 3', 4, 7, ['❤️‍🩹'], goblinNotes, goblinOptions);
             createCharacter('Hector the Well-Endowed', 18, 18, ['⚡️'], '', {});
+            
+            // Add a goblin template to the compendium
+            createCharacter('Goblin', 7, 7, [], goblinNotes, { ...goblinOptions, parent: compendiumShelf });
+
             saveState(); // Perform initial save
         }
         
