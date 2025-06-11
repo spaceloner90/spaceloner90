@@ -206,8 +206,11 @@
                     Notes (N)
                 </button>
             </div>
-            <!-- New row for clear all data button -->
-            <div class="mt-4">
+            <!-- New row for clear all data and other toggle buttons -->
+            <div class="mt-4 space-x-4">
+                <button id="hide-hp-btn" class="bg-gray-600 text-white font-bold py-2 px-5 rounded-lg shadow-md hover:bg-gray-700 focus:outline-none focus:ring-4 focus:ring-gray-300 transition-all duration-200">
+                    Hide HP
+                </button>
                 <button id="clear-all-data-btn" class="bg-red-800 text-white font-bold py-2 px-5 rounded-lg shadow-md hover:bg-red-900 focus:outline-none focus:ring-4 focus:ring-red-300 transition-all duration-200">
                     Clear All Data
                 </button>
@@ -268,6 +271,7 @@
         const closeNotesModalButton = document.getElementById('close-notes-modal-btn');
         const notesTitle = document.getElementById('notes-title');
         const notesContentEditable = document.getElementById('notes-content-editable');
+        const hideHpButton = document.getElementById('hide-hp-btn');
 
 
         // --- Data ---
@@ -277,6 +281,7 @@
             'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500', 'bg-rose-500', 'bg-slate-500'
         ];
         let colorIndex = 0; // To cycle through colors for new characters
+        let isHpHidden = false; // To track HP visibility state
         
         const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
 
@@ -401,6 +406,7 @@
                 });
 
                 localStorage.setItem('initiativeOrder', JSON.stringify(order));
+                localStorage.setItem('isHpHidden', JSON.stringify(isHpHidden));
                 
                 // Cleanup orphaned items
                 const savedOrder = JSON.parse(localStorage.getItem('initiativeOrder')) || [];
@@ -408,7 +414,7 @@
 
                 for (let i = 0; i < localStorage.length; i++) {
                     const key = localStorage.key(i);
-                    if (key !== 'initiativeOrder' && !savedIdSet.has(key)) {
+                    if (key !== 'initiativeOrder' && key !== 'isHpHidden' && !savedIdSet.has(key)) {
                         localStorage.removeItem(key);
                         i--; // Adjust index after removal
                     }
@@ -550,6 +556,7 @@
         }
 
         function initializeHpField(hpSpan) {
+            const parentCard = hpSpan.closest('.character-card');
             hpSpan.addEventListener('focus', () => hpSpan.dataset.originalHp = hpSpan.textContent.trim());
 
             const resolveHp = () => {
@@ -559,13 +566,18 @@
                     newHp = new Function('return (' + expression.replace(/[^-()\d/*+.]/g, '') + ')')();
                 } catch (e) { newHp = parseInt(expression, 10) || 0; }
                 hpSpan.textContent = Math.round(newHp);
+                updateCharacterHpDisplay(parentCard); // Update damage display after edit
                 saveState(); 
             };
             
             hpSpan.addEventListener('blur', resolveHp);
             hpSpan.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); resolveHp(); hpSpan.blur(); } 
-                else if (e.key === 'Escape') { hpSpan.textContent = hpSpan.dataset.originalHp; hpSpan.blur(); }
+                else if (e.key === 'Escape') {
+                    hpSpan.textContent = hpSpan.dataset.originalHp;
+                    updateCharacterHpDisplay(parentCard); // Update damage display after cancel
+                    hpSpan.blur();
+                }
             });
 
             const nameSpan = hpSpan.closest('.draggable').querySelector('.font-bold.text-lg');
@@ -614,6 +626,41 @@
             }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
 
+        // --- HP Display Logic ---
+        function updateCharacterHpDisplay(characterElement) {
+            const standardView = characterElement.querySelector('.hp-standard-view');
+            const damageView = characterElement.querySelector('.hp-damage-view');
+            const damageText = characterElement.querySelector('.damage-text');
+            const hpHeader = characterElement.querySelector('.hp-header');
+
+            if (!standardView || !damageView || !damageText || !hpHeader) return;
+
+            if (isHpHidden) {
+                standardView.classList.add('hidden');
+                hpHeader.classList.add('hidden');
+
+                const currentHp = parseInt(characterElement.querySelector('.current-hp').textContent, 10) || 0;
+                const totalHp = parseInt(characterElement.querySelector('.total-hp').textContent, 10) || 0;
+                const damage = totalHp - currentHp;
+
+                if (damage > 0) {
+                    damageText.textContent = `${damage} damage`;
+                    damageView.classList.remove('hidden');
+                } else {
+                    damageText.textContent = '';
+                    damageView.classList.add('hidden'); // Hide if no damage
+                }
+            } else {
+                standardView.classList.remove('hidden');
+                damageView.classList.add('hidden');
+                hpHeader.classList.remove('hidden');
+            }
+        }
+
+        function updateAllCharacterHpDisplay() {
+            document.querySelectorAll('.character-card').forEach(updateCharacterHpDisplay);
+        }
+
         function createCharacter(name, hp, totalHp, statuses = [], notes = '', options = {}) {
             const { 
                 id = null, insertionElement = null, backgroundColorClass = null, 
@@ -639,11 +686,16 @@
                 <div class="flex flex-col items-center flex-shrink-0">
                     <span contenteditable="true" class="font-bold text-lg p-1 text-center text-readable" ${namePlaceholder}>${nameContent}</span>
                     <div class="flex flex-col items-center mt-2">
-                        <span class="text-xs font-semibold text-white/80 select-none text-readable">HP</span>
-                        <div class="flex items-baseline justify-center">
-                            <span contenteditable="true" class="current-hp text-2xl font-mono p-1 text-readable">${hp}</span>
-                            <span class="mx-1 text-white/80">/</span>
-                            <span contenteditable="true" class="total-hp text-2xl font-mono p-1 text-readable">${totalHp}</span>
+                        <span class="hp-header text-xs font-semibold text-white/80 select-none text-readable">HP</span>
+                        <div class="hp-display-container">
+                            <div class="hp-standard-view flex items-baseline justify-center">
+                                <span contenteditable="true" class="current-hp text-2xl font-mono p-1 text-readable">${hp}</span>
+                                <span class="mx-1 text-white/80">/</span>
+                                <span contenteditable="true" class="total-hp text-2xl font-mono p-1 text-readable">${totalHp}</span>
+                            </div>
+                            <div class="hp-damage-view hidden text-center h-9 flex items-center justify-center">
+                                <span class="damage-text text-lg font-semibold p-1 text-readable text-red-300"></span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -662,6 +714,7 @@
             updateNotesIndicator(newItem);
             initializeHpField(newItem.querySelector('.current-hp'));
             initializeHpField(newItem.querySelector('.total-hp'));
+            updateCharacterHpDisplay(newItem); // Apply current HP visibility state
             initializeDraggable(newItem);
             initializeSelectable(newItem);
             initializeContextMenu(newItem);
@@ -874,14 +927,12 @@
             originals.forEach(original => {
                 const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
                 
-                // Determine the base name (e.g., "Goblin")
                 const nameMatch = originalName.match(/(.+) (\d+)$/);
                 const baseName = nameMatch ? nameMatch[1] : originalName;
 
-                // Find all characters on the shelf to determine the next number and position
                 const allCharacters = Array.from(shelf.querySelectorAll('.character-card'));
                 let highestNumber = 0;
-                let insertionTarget = original; // Default to inserting after the original
+                let insertionTarget = original;
 
                 allCharacters.forEach(char => {
                     const charName = char.querySelector('.font-bold.text-lg').textContent.trim();
@@ -891,10 +942,9 @@
                             const currentNum = parseInt(charMatch[1], 10);
                             if (currentNum > highestNumber) {
                                 highestNumber = currentNum;
-                                insertionTarget = char; // Found a new highest, so we'll insert after this one
+                                insertionTarget = char;
                             }
                         } else if (highestNumber === 0) {
-                            // This handles the case where the first item is un-numbered (e.g., "Goblin")
                             highestNumber = 1;
                             insertionTarget = char;
                         }
@@ -904,7 +954,6 @@
                 const newNumber = highestNumber + 1;
                 const newName = `${baseName} ${newNumber}`;
                 
-                // Gather properties from the original to copy
                 const hp = original.querySelector('.current-hp').textContent.trim();
                 const totalHp = original.querySelector('.total-hp').textContent.trim();
                 const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
@@ -913,12 +962,27 @@
                 const bgStyle = original.style.backgroundImage;
 
                 const options = { 
-                    insertionElement: insertionTarget, // Use the calculated insertion target
+                    insertionElement: insertionTarget,
                     backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/['"]/g, '') : '',
                     bgImageKey: bgImageKey
                 };
                 createCharacter(newName, hp, totalHp, statuses, notes, options);
             });
+            saveState();
+        });
+
+        hideHpButton.addEventListener('click', () => {
+            isHpHidden = !isHpHidden;
+            updateAllCharacterHpDisplay();
+            if (isHpHidden) {
+                hideHpButton.textContent = 'Show HP';
+                hideHpButton.classList.remove('bg-gray-600', 'hover:bg-gray-700', 'focus:ring-gray-300');
+                hideHpButton.classList.add('bg-cyan-600', 'hover:bg-cyan-700', 'focus:ring-cyan-300');
+            } else {
+                hideHpButton.textContent = 'Hide HP';
+                hideHpButton.classList.add('bg-gray-600', 'hover:bg-gray-700', 'focus:ring-gray-300');
+                hideHpButton.classList.remove('bg-cyan-600', 'hover:bg-cyan-700', 'focus:ring-cyan-300');
+            }
             saveState();
         });
 
@@ -1040,9 +1104,19 @@
         async function initializeApp() {
             populateColorMenu();
             await openIndexedDB();
+
+            isHpHidden = JSON.parse(localStorage.getItem('isHpHidden')) || false;
+            if (isHpHidden) {
+                hideHpButton.textContent = 'Show HP';
+                hideHpButton.classList.remove('bg-gray-600', 'hover:bg-gray-700');
+                hideHpButton.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+            }
+
             if (!await loadState()) {
                 initializeDefaultScene();
             }
+            
+            updateAllCharacterHpDisplay();
         }
         
         initializeApp();
