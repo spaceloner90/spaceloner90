@@ -301,7 +301,8 @@
              </div>
              <div class="p-2 border-t border-gray-300 flex space-x-2"> <!-- Added flex and space-x-2 for layout -->
                 <button id="dnd5e-import-btn" class="w-full bg-blue-700 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-600">DND 5e</button>
-                <!-- Removed the hidden file input here -->
+                <!-- NEW: PF2e Import Button -->
+                <button id="pf2e-import-btn" class="w-full bg-purple-700 text-white font-bold py-2 px-4 rounded-md hover:bg-purple-800 focus:outline-none focus:ring-2 focus:ring-purple-600">PF2e</button>
                 <button id="manage-compendium-data-btn" class="w-full bg-gray-500 text-white font-bold py-2 px-4 rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400">Manage Data</button>
              </div>
         </div>
@@ -382,8 +383,9 @@
         const compendiumDataModal = document.getElementById('compendium-data-modal');
         const closeCompendiumDataModalBtn = document.getElementById('close-compendium-data-modal-btn');
         const compendiumDataTextarea = document.getElementById('compendium-data-textarea');
-        // NEW: Get references to the DND 5e button
+        // Get references to the DND 5e and PF2e buttons
         const dnd5eImportBtn = document.getElementById('dnd5e-import-btn');
+        const pf2eImportBtn = document.getElementById('pf2e-import-btn'); // NEW: PF2e Button
 
 
         // --- Data ---
@@ -1036,14 +1038,14 @@
                 parent.appendChild(newItem);
             }
 
-            if (parent.id === 'compendium-shelf-inner') {
-                refreshCompendiumLayout();
-            }
-
             if (!options.id) { // Only animate and save if it's a newly created item
                 newItem.classList.add('pop-in-animation');
                 newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
                 saveState();
+            }
+            // Ensure compendium layout is refreshed if adding to it, even if not animating
+            if (parent.id === 'compendium-shelf-inner') {
+                refreshCompendiumLayout();
             }
             return newItem;
         }
@@ -1267,64 +1269,66 @@
             compendiumDataModal.classList.add('hidden');
         });
 
-        // NEW: Event listener for the DND 5e button to fetch JSON from a relative path
-        dnd5eImportBtn.addEventListener('click', async () => {
+        /**
+         * Fetches and imports character data from a specified JSON file.
+         * @param {string} filename - The name of the JSON file to fetch.
+         */
+        async function fetchAndImportCharacterData(filename) {
             try {
-                // Fetch the dnd_5e.json file from the same directory
-                const response = await fetch('dnd_5e.json');
+                const response = await fetch(filename);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const jsonData = await response.json();
-                importDnd5eData(jsonData);
+                importCharacterData(jsonData, filename); // Pass filename for logging/alert
             } catch (error) {
-                console.error("Error fetching or parsing DND 5e JSON file:", error);
-                // Provide user feedback, e.g., using a custom modal or temporary message
-                alert("Failed to load DND 5e data. Please ensure 'dnd_5e.json' is in the same directory.");
+                console.error(`Error fetching or parsing ${filename}:`, error);
+                alert(`Failed to load data from '${filename}'. Please ensure the file exists and is correctly formatted JSON.`);
             }
-        });
+        }
 
-        // NEW: Function to import DND 5e data
-        function importDnd5eData(data) {
+        /**
+         * Imports character data into the compendium from a parsed JSON array.
+         * @param {Array<Object>} data - An array of character objects to import.
+         * @param {string} [source='unknown'] - Optional source of the data for logging/alerts.
+         */
+        function importCharacterData(data, source = 'unknown') {
             if (!Array.isArray(data)) {
-                console.error("DND 5e data is not an array. Expected an array of character objects.");
-                // Show a user-friendly error
-                alert("DND 5e data format is incorrect. Expected an array of character objects.");
+                console.error(`Data from ${source} is not an array. Expected an array of character objects.`);
+                alert(`Data format from '${source}' is incorrect. Expected an array of character objects.`);
                 return;
             }
 
-            // Optional: You could ask the user if they want to clear existing compendium data first.
-            // For now, we'll just add the new characters to the existing compendium.
-
             data.forEach(charData => {
-                // Ensure default values for missing properties to prevent errors
                 const name = charData.name || 'Unnamed Character';
                 const hp = charData.hp || '10';
-                const totalHp = charData.totalHp || charData.hp || '10'; // Use hp if totalHp is missing
+                const totalHp = charData.totalHp || charData.hp || '10';
                 const statuses = Array.isArray(charData.statuses) ? charData.statuses : [];
                 const notes = charData.notes || '';
                 const bgColor = charData.bgColor || '';
-                const bgImageKey = charData.bgImageKey || ''; // This would be a URL directly in imported JSON, not an IndexedDB key
+                const bgImageKey = charData.bgImageKey || '';
 
                 createCharacter(
-                    name,
-                    hp,
-                    totalHp,
-                    statuses,
-                    notes,
+                    name, hp, totalHp, statuses, notes,
                     {
                         parent: compendiumShelfInner,
                         backgroundColorClass: bgColor,
-                        backgroundImage: bgImageKey, // It's a URL if it exists
+                        backgroundImage: bgImageKey,
                         bgImageKey: bgImageKey
                     }
                 );
             });
 
-            refreshCompendiumLayout(); // Re-layout the compendium after adding new characters
-            saveState(); // Save the new compendium state
-            console.log("DND 5e data imported successfully!");
+            refreshCompendiumLayout();
+            saveState();
+            console.log(`Character data imported successfully from ${source}!`);
         }
+
+        // Event listener for the DND 5e button
+        dnd5eImportBtn.addEventListener('click', () => fetchAndImportCharacterData('dnd_5e.json'));
+
+        // NEW: Event listener for the PF2e button
+        pf2eImportBtn.addEventListener('click', () => fetchAndImportCharacterData('pf2e_core.json'));
 
 
         // --- Button & Keyboard Logic ---
