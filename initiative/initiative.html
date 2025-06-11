@@ -375,14 +375,16 @@
                     let itemData;
                     if (item.classList.contains('character-card')) {
                         const nameSpan = item.querySelector('.font-bold.text-lg');
-                        const hpSpan = item.querySelector('.text-2xl.font-mono');
+                        const currentHpSpan = item.querySelector('.current-hp');
+                        const totalHpSpan = item.querySelector('.total-hp');
                         const statusContainer = item.querySelector('.status-container');
                         const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
                         
                         itemData = {
                             type: 'character',
                             name: nameSpan ? nameSpan.textContent.trim() : '',
-                            hp: hpSpan ? hpSpan.textContent.trim() : '',
+                            hp: currentHpSpan ? currentHpSpan.textContent.trim() : '',
+                            totalHp: totalHpSpan ? totalHpSpan.textContent.trim() : '',
                             statuses: statuses,
                             bgColor: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
                             bgImageKey: item.dataset.bgImageKey || '',
@@ -459,8 +461,12 @@
                             bgImageKey: data.bgImageKey
                         };
                         createCharacter(
-                            data.name, data.hp, data.statuses,
-                            data.notes, options
+                            data.name, 
+                            data.hp, 
+                            data.totalHp || data.hp, // Fallback for old data
+                            data.statuses,
+                            data.notes, 
+                            options
                         );
                     }
                 });
@@ -608,7 +614,7 @@
             }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
 
-        function createCharacter(name, hp, statuses = [], notes = '', options = {}) {
+        function createCharacter(name, hp, totalHp, statuses = [], notes = '', options = {}) {
             const { 
                 id = null, insertionElement = null, backgroundColorClass = null, 
                 backgroundImage = '', bgImageKey = ''
@@ -634,7 +640,11 @@
                     <span contenteditable="true" class="font-bold text-lg p-1 text-center text-readable" ${namePlaceholder}>${nameContent}</span>
                     <div class="flex flex-col items-center mt-2">
                         <span class="text-xs font-semibold text-white/80 select-none text-readable">HP</span>
-                        <span contenteditable="true" class="text-2xl font-mono p-1 text-readable">${hp}</span>
+                        <div class="flex items-baseline justify-center">
+                            <span contenteditable="true" class="current-hp text-2xl font-mono p-1 text-readable">${hp}</span>
+                            <span class="mx-1 text-white/80">/</span>
+                            <span contenteditable="true" class="total-hp text-2xl font-mono p-1 text-readable">${totalHp}</span>
+                        </div>
                     </div>
                 </div>
                 <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2"></div>
@@ -650,7 +660,8 @@
             });
             
             updateNotesIndicator(newItem);
-            initializeHpField(newItem.querySelector('.text-2xl.font-mono'));
+            initializeHpField(newItem.querySelector('.current-hp'));
+            initializeHpField(newItem.querySelector('.total-hp'));
             initializeDraggable(newItem);
             initializeSelectable(newItem);
             initializeContextMenu(newItem);
@@ -845,7 +856,7 @@
             }
         });
 
-        addButton.addEventListener('click', () => createCharacter('', 10, [], '', {}));
+        addButton.addEventListener('click', () => createCharacter('', 10, 10, [], '', {}));
 
         removeButton.addEventListener('click', () => {
             document.querySelectorAll('.highlighted').forEach(item => {
@@ -894,7 +905,8 @@
                 const newName = `${baseName} ${newNumber}`;
                 
                 // Gather properties from the original to copy
-                const hp = original.querySelector('.text-2xl.font-mono').textContent.trim();
+                const hp = original.querySelector('.current-hp').textContent.trim();
+                const totalHp = original.querySelector('.total-hp').textContent.trim();
                 const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
                 const notes = original.dataset.notes || '';
                 const bgImageKey = original.dataset.bgImageKey || '';
@@ -905,7 +917,7 @@
                     backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/['"]/g, '') : '',
                     bgImageKey: bgImageKey
                 };
-                createCharacter(newName, hp, statuses, notes, options);
+                createCharacter(newName, hp, totalHp, statuses, notes, options);
             });
             saveState();
         });
@@ -1018,10 +1030,10 @@
 
             createTurnMarker();
             const goblinOptions = { bgImageKey: goblinImageUrl, backgroundImage: goblinImageUrl };
-            createCharacter('Goblin 1', 7, [], goblinNotes, goblinOptions);
-            createCharacter('Goblin 2', 7, [], goblinNotes, goblinOptions);
-            createCharacter('Goblin 3', 4, ['❤️‍🩹'], goblinNotes, goblinOptions);
-            createCharacter('Hector the Well-Endowed', 18, ['⚡️'], '', {});
+            createCharacter('Goblin 1', 7, 7, [], goblinNotes, goblinOptions);
+            createCharacter('Goblin 2', 7, 7, [], goblinNotes, goblinOptions);
+            createCharacter('Goblin 3', 4, 7, ['❤️‍🩹'], goblinNotes, goblinOptions);
+            createCharacter('Hector the Well-Endowed', 18, 18, ['⚡️'], '', {});
             saveState(); // Perform initial save
         }
         
