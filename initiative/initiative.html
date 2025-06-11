@@ -402,8 +402,8 @@
         // --- IndexedDB Setup ---
         let db;
         const DB_NAME = 'initiativeTrackerDB';
-        // Increased DB_VERSION to trigger onupgradeneeded for new 'characters' store
-        const DB_VERSION = 3;
+        // Increased DB_VERSION to trigger onupgradeneeded for robust migration
+        const DB_VERSION = 4;
         const IMAGE_STORE_NAME = 'images';
         const CHARACTER_STORE_NAME = 'characters'; // New store name
 
@@ -413,15 +413,56 @@
 
                 request.onupgradeneeded = (event) => {
                     db = event.target.result;
-                    // Delete existing stores if they exist and recreate to ensure correct schema
-                    if (db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
-                        db.deleteObjectStore(IMAGE_STORE_NAME);
+                    console.log(`IndexedDB upgrade needed from version ${event.oldVersion} to ${event.newVersion}`);
+
+                    // Create or get 'images' store
+                    let imageStore;
+                    if (!db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
+                        imageStore = db.createObjectStore(IMAGE_STORE_NAME, { keyPath: 'id' });
+                        console.log(`Created new '${IMAGE_STORE_NAME}' object store.`);
+                    } else {
+                        imageStore = request.transaction.objectStore(IMAGE_STORE_NAME);
+                        console.log(`'${IMAGE_STORE_NAME}' object store already exists.`);
                     }
-                    if (db.objectStoreNames.contains(CHARACTER_STORE_NAME)) {
-                        db.deleteObjectStore(CHARACTER_STORE_NAME);
+
+                    // Create or get 'characters' store
+                    let characterStore;
+                    if (!db.objectStoreNames.contains(CHARACTER_STORE_NAME)) {
+                        characterStore = db.createObjectStore(CHARACTER_STORE_NAME, { keyPath: 'id' });
+                        console.log(`Created new '${CHARACTER_STORE_NAME}' object store.`);
+                    } else {
+                        characterStore = request.transaction.objectStore(CHARACTER_STORE_NAME);
+                        console.log(`'${CHARACTER_STORE_NAME}' object store already exists.`);
                     }
-                    db.createObjectStore(IMAGE_STORE_NAME, { keyPath: 'id' });
-                    db.createObjectStore(CHARACTER_STORE_NAME, { keyPath: 'id' }); // Create new characters store
+
+                    // Migration logic for old character data from localStorage to IndexedDB
+                    // This will run if upgrading from a version where characters were exclusively in localStorage.
+                    // Version 3 already moved characters to IndexedDB, but deleting existing stores on upgrade was a risk.
+                    // This ensures data from pre-v3 states or fragmented v3 states is migrated.
+                    if (event.oldVersion < 3) {
+                        console.log("Attempting to migrate character data from localStorage to IndexedDB...");
+                        // Access the transaction associated with the upgradeneeded event
+                        const transaction = event.target.transaction;
+                        const charStore = transaction.objectStore(CHARACTER_STORE_NAME);
+
+                        for (let i = 0; i < localStorage.length; i++) {
+                            const key = localStorage.key(i);
+                            // Only process items that look like old character data saved individually
+                            if (key && key.startsWith('char-')) {
+                                try {
+                                    const itemData = JSON.parse(localStorage.getItem(key));
+                                    // Ensure it's character data and not just an order array
+                                    if (itemData && typeof itemData === 'object' && itemData.type === 'character') {
+                                        // Attempt to add, if ID already exists (e.g., from a partial v3 load), it will error, but not halt transaction
+                                        charStore.put({ id: key, ...itemData }); // Use put to handle potential existing entries
+                                        console.log(`Migrated character ${key} from localStorage to IndexedDB.`);
+                                    }
+                                } catch (e) {
+                                    console.warn(`Could not parse or migrate localStorage item ${key}:`, e);
+                                }
+                            }
+                        }
+                    }
                 };
 
                 request.onsuccess = (event) => {
@@ -640,7 +681,12 @@
 
                 console.log('State loaded from IndexedDB and localStorage.');
                 updateActionButtonsState();
-                return shelf.children.length > 0;
+                
+                // Return true if any items were loaded to either shelf, or if there were orders in localStorage
+                const hasInitiativeOrder = localStorage.getItem('initiativeOrder') !== null;
+                const hasCompendiumOrder = localStorage.getItem('compendiumOrder') !== null;
+                return hasInitiativeOrder || hasCompendiumOrder;
+
             } catch (e) {
                 console.error("Failed to load or parse state:", e);
                 return false;
@@ -1567,7 +1613,7 @@
                 const options = {
                     parent: parentShelf,
                     insertionElement: insertionTarget,
-                    backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/["']/g, '') : '',
+                    backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/[""]/g, '') : '',
                     bgImageKey: bgImageKey
                 };
                 createCharacter(newName, hp, totalHp, statuses, notes, options);
@@ -1735,17 +1781,20 @@
         });
 
         function initializeDefaultScene() {
-            localStorage.clear();
+            localStorage.clear(); // Ensure localStorage is clean for default scene setup
             colorIndex = 0; // Ensure colors start from the beginning
             const goblinImageUrl = 'https://www.dndbeyond.com/avatars/thumbnails/30783/955/1000/1000/638062024584880857.png';
             const goblinNotes = `<p><strong>Goblin</strong><br><em>Small Humanoid (Goblinoid), Neutral Evil</em></p><hr><p><strong>Armor Class</strong> 15 (leather armor, shield)<br><strong>Hit Points</strong> 7 (2d6)<br><strong>Speed</strong> 30 ft.</p><hr><p><strong>STR</strong> 8 (-1) | <strong>DEX</strong> 14 (+2) | <strong>CON</strong> 10 (+0) | <strong>INT</strong> 10 (+0) | <strong>WIS</strong> 8 (-1) | <strong>CHA</strong> 8 (-1)</p><hr><p><strong>Skills</strong> Stealth +6<br><strong>Senses</strong> Darkvision 60 ft., Passive Perception 9<br><strong>Languages</strong> Common, Goblin<br><strong>Challenge</strong> 1/4 (50 XP) | <strong>Proficiency Bonus</strong> +2</p><hr><p><strong><em>Nimble Escape.</em></strong> The goblin can take the Disengage or Hide action as a bonus action on each of its turns.</p><p><strong>Actions</strong><br><strong><em>Scimitar.</em></strong> <em>Melee Weapon Attack:</em> +4 to hit, reach 5 ft., one target. <em>Hit:</em> 5 (1d6 + 2) slashing damage.<br><strong><em>Shortbow.</em></strong> <em>Ranged Weapon Attack:</em> +4 to hit, range 80/320 ft., one target. <em>Hit:</em> 5 (1d6 + 2) piercing damage.</p>`;
+            const hectorImageUrl = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQg4hykDiVWaLpgPyX2boVONNK76mugungN3A&s';
 
+            // Using await with createCharacter/createTurnMarker to ensure they are fully saved before state is saved again
             createTurnMarker();
             const goblinOptions = { bgImageKey: goblinImageUrl, backgroundImage: goblinImageUrl };
+            const hectorOptions = { bgImageKey: hectorImageUrl, backgroundImage: hectorImageUrl };
             createCharacter('Goblin 1', 7, 7, [], goblinNotes, goblinOptions);
             createCharacter('Goblin 2', 7, 7, [], goblinNotes, goblinOptions);
             createCharacter('Goblin 3', 4, 7, ['❤️‍🩹'], goblinNotes, goblinOptions);
-            createCharacter('Hector the Well-Endowed', 18, 18, ['⚡️'], '', {});
+            createCharacter('Hector the Well-Endowed', 18, 18, ['⚡️'], '', hectorOptions);
 
             // Add a goblin template to the compendium
             createCharacter('Goblin', 7, 7, [], goblinNotes, { ...goblinOptions, parent: compendiumShelfInner });
@@ -1757,7 +1806,8 @@
             await openIndexedDB();
 
             if (!await loadState()) {
-                initializeDefaultScene();
+                // Only initialize default scene if loadState indicates no prior data
+                await initializeDefaultScene(); // Wait for default scene to be fully created and saved
             }
 
             updateAllCharacterHpDisplay();
