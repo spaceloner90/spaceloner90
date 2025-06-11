@@ -1354,7 +1354,40 @@
             }
         });
 
-        addButton.addEventListener('click', () => createCharacter('', 10, 10, [], '', {}));
+        // Function to handle adding characters, either new or from compendium
+        function handleAddCharacter() {
+            const selectedCompendiumCharacters = Array.from(compendiumShelfInner.querySelectorAll('.highlighted.character-card'));
+
+            if (selectedCompendiumCharacters.length > 0) {
+                // Create copies of selected compendium characters on the main shelf
+                selectedCompendiumCharacters.forEach(original => {
+                    const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
+                    const hp = original.querySelector('.current-hp').textContent.trim();
+                    const totalHp = original.querySelector('.total-hp').textContent.trim();
+                    const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
+                    const notes = original.dataset.notes || '';
+                    const bgImageKey = original.dataset.bgImageKey || '';
+                    const bgStyle = original.style.backgroundImage;
+
+                    createCharacter(
+                        originalName, hp, totalHp, statuses, notes,
+                        {
+                            parent: shelf, // Add to main shelf
+                            backgroundColorClass: Array.from(original.classList).find(cls => colorPalette.includes(cls)) || '',
+                            backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/["']/g, '') : '',
+                            bgImageKey: bgImageKey
+                        }
+                    );
+                });
+            } else {
+                // No compendium characters selected, create a blank one
+                createCharacter('', 10, 10, [], '', {});
+            }
+            saveState(); // Save state after adding character(s)
+        }
+
+        addButton.addEventListener('click', handleAddCharacter);
+
 
         removeButton.addEventListener('click', () => {
             document.querySelectorAll('.highlighted').forEach(item => {
@@ -1558,7 +1591,7 @@
             switch (event.code) {
                 case 'Space': event.preventDefault(); moveButton.click(); break;
                 case 'Backspace': event.preventDefault(); lastTurnButton.click(); break;
-                case 'KeyA': event.preventDefault(); addButton.click(); break;
+                case 'KeyA': event.preventDefault(); handleAddCharacter(); break; // Use handleAddCharacter
                 case 'KeyS': event.preventDefault(); if (!addStatusButton.disabled) handleStatusModalToggle(); break;
                 case 'KeyC': event.preventDefault(); if (!copyButton.disabled) copyButton.click(); break;
                 case 'KeyX': event.preventDefault(); if (!clearStatusesButton.disabled) clearStatusesButton.click(); break;
