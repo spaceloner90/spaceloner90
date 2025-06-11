@@ -293,7 +293,7 @@
                 request.onupgradeneeded = (event) => {
                     db = event.target.result;
                     if (!db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
-                        db.createObjectStore(IMAGE_STORE_NAME);
+                        db.createObjectStore(IMAGE_STORE_NAME, { keyPath: 'id' });
                     }
                 };
 
@@ -315,7 +315,7 @@
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([IMAGE_STORE_NAME], 'readwrite');
                 const store = transaction.objectStore(IMAGE_STORE_NAME);
-                const request = store.put(blob, id);
+                const request = store.put({ id: id, blob: blob });
 
                 request.onsuccess = () => resolve();
                 request.onerror = (event) => reject(event.target.errorCode);
@@ -329,7 +329,7 @@
                 const store = transaction.objectStore(IMAGE_STORE_NAME);
                 const request = store.get(id);
 
-                request.onsuccess = (event) => resolve(event.target.result);
+                request.onsuccess = (event) => resolve(event.target.result ? event.target.result.blob : null);
                 request.onerror = (event) => reject(event.target.errorCode);
             });
         }
@@ -357,14 +357,12 @@
         }
 
 
-        // --- MODIFIED: LocalStorage Persistence ---
-        
+        // --- LocalStorage Persistence ---
         function saveState() {
             try {
                 const order = [];
                 const currentIds = new Set();
                 
-                // Save each item and build the order array
                 Array.from(shelf.children).forEach(item => {
                     const id = item.id;
                     order.push(id);
@@ -376,16 +374,14 @@
                         const hpSpan = item.querySelector('.text-2xl.font-mono');
                         const statusContainer = item.querySelector('.status-container');
                         const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
-                        const bgColorClass = Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '';
-                        const bgImage = item.dataset.bgImageKey || '';
                         
                         itemData = {
                             type: 'character',
                             name: nameSpan ? nameSpan.textContent.trim() : '',
                             hp: hpSpan ? hpSpan.textContent.trim() : '',
                             statuses: statuses,
-                            bgColor: bgColorClass,
-                            bgImage: bgImage,
+                            bgColor: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
+                            bgImageKey: item.dataset.bgImageKey || '',
                             notes: item.dataset.notes || ''
                         };
                     } else if (item.id.startsWith('turn-marker')) {
@@ -398,25 +394,26 @@
                     localStorage.setItem(id, JSON.stringify(itemData));
                 });
 
-                // Save the current turn order
                 localStorage.setItem('initiativeOrder', JSON.stringify(order));
                 
-                // Cleanup orphaned items from localStorage
+                // Cleanup orphaned items
+                const savedOrder = JSON.parse(localStorage.getItem('initiativeOrder')) || [];
+                const savedIdSet = new Set(savedOrder);
+
                 for (let i = 0; i < localStorage.length; i++) {
                     const key = localStorage.key(i);
-                    if (key !== 'initiativeOrder' && !currentIds.has(key)) {
+                    if (key !== 'initiativeOrder' && !savedIdSet.has(key)) {
                         localStorage.removeItem(key);
-                        console.log(`Cleaned up orphaned item: ${key}`);
+                        i--; // Adjust index after removal
                     }
                 }
                 console.log('State saved to localStorage.');
-
             } catch (e) {
                 console.error("Failed to save state to localStorage:", e);
-                // Potentially show a user-facing error message here
             }
         }
-
+        
+        // --- MODIFIED: Asynchronous Loading Function ---
         async function loadState() {
             const orderJSON = localStorage.getItem('initiativeOrder');
             if (!orderJSON) return false;
@@ -425,38 +422,45 @@
                 const order = JSON.parse(orderJSON);
                 shelf.innerHTML = ''; 
 
-                for (const id of order) {
+                const itemPromises = order.map(async (id) => {
                     const itemJSON = localStorage.getItem(id);
-                    if (!itemJSON) continue; // Skip if item data is missing
+                    if (!itemJSON) return null;
                     
                     const itemData = JSON.parse(itemJSON);
+                    
+                    let bgImageUrl = '';
+                    if (itemData.bgImageKey && itemData.bgImageKey.startsWith('indexeddb://')) {
+                        const blob = await loadImageFromIndexedDB(itemData.bgImageKey).catch(e => console.error(e));
+                        if(blob) bgImageUrl = URL.createObjectURL(blob);
+                    } else if (itemData.bgImageKey) {
+                        bgImageUrl = itemData.bgImageKey;
+                    }
 
-                    if (itemData.type === 'turnMarker') {
-                        createTurnMarker(id, itemData.turn);
-                    } else if (itemData.type === 'character') {
-                        let actualBackgroundImage = '';
-                        if (itemData.bgImage) {
-                             if (itemData.bgImage.startsWith('indexeddb://')) {
-                                const imageId = itemData.bgImage.substring('indexeddb://'.length);
-                                const blob = await loadImageFromIndexedDB(imageId).catch(e => console.error(e));
-                                if (blob) actualBackgroundImage = URL.createObjectURL(blob);
-                            } else {
-                                actualBackgroundImage = itemData.bgImage; // It's a direct URL
-                            }
-                        }
-                       
+                    itemData.bgImageUrl = bgImageUrl; // Attach the resolved URL
+                    return { id, data: itemData };
+                });
+
+                const loadedItems = await Promise.all(itemPromises);
+
+                loadedItems.forEach(item => {
+                    if (!item) return;
+                    const { id, data } = item;
+                    if (data.type === 'turnMarker') {
+                        createTurnMarker(id, data.turn);
+                    } else if (data.type === 'character') {
                         const options = {
                             id: id,
-                            backgroundColorClass: itemData.bgColor,
-                            backgroundImage: actualBackgroundImage,
-                            bgImageKey: itemData.bgImage
+                            backgroundColorClass: data.bgColor,
+                            backgroundImage: data.bgImageUrl,
+                            bgImageKey: data.bgImageKey
                         };
                         createCharacter(
-                            itemData.name, itemData.hp, itemData.statuses,
-                            itemData.notes, options
+                            data.name, data.hp, data.statuses,
+                            data.notes, options
                         );
                     }
-                }
+                });
+
                 console.log('State loaded from localStorage.');
                 updateActionButtonsState();
                 return true;
@@ -600,7 +604,6 @@
             }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
 
-        // --- MODIFIED: Character/Marker Creation Functions now handle IDs ---
         function createCharacter(name, hp, statuses = [], notes = '', options = {}) {
             const { 
                 id = null, insertionElement = null, backgroundColorClass = null, 
@@ -651,10 +654,11 @@
             if(insertionElement) insertionElement.after(newItem);
             else shelf.appendChild(newItem);
 
-            newItem.classList.add('pop-in-animation');
-            newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
-            
-            if (!id) saveState();
+            if (!options.id) { // Only animate and save if it's a newly created item
+                newItem.classList.add('pop-in-animation');
+                newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
+                saveState();
+            }
             return newItem; 
         }
         
@@ -709,7 +713,7 @@
                             statusContainer.appendChild(statusIcon);
                         }
                     });
-                    populateSymbolModal(selectedItems); // Refresh modal state
+                    populateSymbolModal(selectedItems);
                     saveState(); 
                 });
                 symbolGrid.appendChild(symbolButton);
@@ -842,7 +846,10 @@
         addButton.addEventListener('click', () => createCharacter('', 10, [], '', {}));
 
         removeButton.addEventListener('click', () => {
-            document.querySelectorAll('.highlighted').forEach(item => item.remove());
+            document.querySelectorAll('.highlighted').forEach(item => {
+                localStorage.removeItem(item.id);
+                item.remove();
+            });
             updateActionButtonsState();
             saveState(); 
         });
@@ -870,11 +877,10 @@
                 const options = { 
                     insertionElement: lastOriginal, 
                     backgroundColorClass: backgroundColorClass,
-                    backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2) : '', // Extract URL
+                    backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/['"]/g, '') : '',
                     bgImageKey: bgImageKey
                 };
-                const newChar = createCharacter(newName, hp, statuses, notes, options);
-                lastOriginal = newChar;
+                lastOriginal = createCharacter(newName, hp, statuses, notes, options);
             });
             saveState();
         });
@@ -887,16 +893,12 @@
         clearAllDataButton.addEventListener('click', async () => { 
             localStorage.clear();
             if (db) {
-                db.close();
-                db = null;
-                await new Promise((resolve, reject) => {
-                    const req = indexedDB.deleteDatabase(DB_NAME);
-                    req.onsuccess = resolve;
-                    req.onerror = reject;
-                });
+                const transaction = db.transaction([IMAGE_STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(IMAGE_STORE_NAME);
+                store.clear();
             }
             shelf.innerHTML = ''; 
-            initializeApp();
+            await initializeApp();
         });
 
         let isSelecting = false;
@@ -984,6 +986,7 @@
         });
 
         function initializeDefaultScene() {
+            localStorage.clear();
             const goblinImageUrl = 'https://www.dndbeyond.com/avatars/thumbnails/30783/955/1000/1000/638062024584880857.png';
             const goblinNotes = `<p><strong>Goblin</strong><br><em>Small Humanoid (Goblinoid), Neutral Evil</em></p><hr><p><strong>Armor Class</strong> 15 (leather armor, shield)<br><strong>Hit Points</strong> 7 (2d6)<br><strong>Speed</strong> 30 ft.</p><hr><p><strong>STR</strong> 8 (-1) | <strong>DEX</strong> 14 (+2) | <strong>CON</strong> 10 (+0) | <strong>INT</strong> 10 (+0) | <strong>WIS</strong> 8 (-1) | <strong>CHA</strong> 8 (-1)</p><hr><p><strong>Skills</strong> Stealth +6<br><strong>Senses</strong> Darkvision 60 ft., Passive Perception 9<br><strong>Languages</strong> Common, Goblin<br><strong>Challenge</strong> 1/4 (50 XP) | <strong>Proficiency Bonus</strong> +2</p><hr><p><strong><em>Nimble Escape.</em></strong> The goblin can take the Disengage or Hide action as a bonus action on each of its turns.</p><p><strong>Actions</strong><br><strong><em>Scimitar.</em></strong> <em>Melee Weapon Attack:</em> +4 to hit, reach 5 ft., one target. <em>Hit:</em> 5 (1d6 + 2) slashing damage.<br><strong><em>Shortbow.</em></strong> <em>Ranged Weapon Attack:</em> +4 to hit, range 80/320 ft., one target. <em>Hit:</em> 5 (1d6 + 2) piercing damage.</p>`;
 
