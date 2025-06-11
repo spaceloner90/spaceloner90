@@ -385,7 +385,7 @@
         const compendiumDataTextarea = document.getElementById('compendium-data-textarea');
         // Get references to the DND 5e and PF2e buttons
         const dnd5eImportBtn = document.getElementById('dnd5e-import-btn');
-        const pf2eImportBtn = document.getElementById('pf2e-import-btn'); // NEW: PF2e Button
+        const pf2eImportBtn = document.getElementById('pf2e-import-btn');
 
 
         // --- Data ---
@@ -399,11 +399,13 @@
 
         const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
 
-        // --- IndexedDB Setup (Still used for images) ---
+        // --- IndexedDB Setup ---
         let db;
         const DB_NAME = 'initiativeTrackerDB';
-        const DB_VERSION = 2;
+        // Increased DB_VERSION to trigger onupgradeneeded for new 'characters' store
+        const DB_VERSION = 3;
         const IMAGE_STORE_NAME = 'images';
+        const CHARACTER_STORE_NAME = 'characters'; // New store name
 
         function openIndexedDB() {
             return new Promise((resolve, reject) => {
@@ -411,10 +413,15 @@
 
                 request.onupgradeneeded = (event) => {
                     db = event.target.result;
+                    // Delete existing stores if they exist and recreate to ensure correct schema
                     if (db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
                         db.deleteObjectStore(IMAGE_STORE_NAME);
                     }
+                    if (db.objectStoreNames.contains(CHARACTER_STORE_NAME)) {
+                        db.deleteObjectStore(CHARACTER_STORE_NAME);
+                    }
                     db.createObjectStore(IMAGE_STORE_NAME, { keyPath: 'id' });
+                    db.createObjectStore(CHARACTER_STORE_NAME, { keyPath: 'id' }); // Create new characters store
                 };
 
                 request.onsuccess = (event) => {
@@ -469,76 +476,103 @@
             });
         }
 
-        function base64ToBlob(base64, mimeType) {
-            const byteCharacters = atob(base64);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {
-                byteNumbers[i] = byteCharacters.charCodeAt(i);
-            }
-            const byteArray = new Uint8Array(byteNumbers);
-            return new Blob([byteArray], { type: mimeType });
+        // NEW: Functions for character data in IndexedDB
+        async function saveCharacterToIndexedDB(id, characterData) {
+            if (!db) await openIndexedDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([CHARACTER_STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(CHARACTER_STORE_NAME);
+                const request = store.put({ id: id, ...characterData });
+
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => {
+                    console.error("Failed to put character in IndexedDB:", event.target.error);
+                    reject(event.target.error);
+                };
+            });
         }
 
+        async function loadCharacterFromIndexedDB(id) {
+            if (!db) await openIndexedDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([CHARACTER_STORE_NAME], 'readonly');
+                const store = transaction.objectStore(CHARACTER_STORE_NAME);
+                const request = store.get(id);
 
-        // --- LocalStorage Persistence ---
+                request.onsuccess = (event) => resolve(event.target.result);
+                request.onerror = (event) => {
+                    console.error("Failed to get character from IndexedDB:", event.target.error);
+                    reject(event.target.error);
+                };
+            });
+        }
+
+        async function deleteCharacterFromIndexedDB(id) {
+            if (!db) await openIndexedDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([CHARACTER_STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(CHARACTER_STORE_NAME);
+                const request = store.delete(id);
+
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => {
+                    console.error("Failed to delete character from IndexedDB:", event.target.error);
+                    reject(event.target.error);
+                };
+            });
+        }
+
+        // --- LocalStorage Persistence (now only for order) ---
         function saveState() {
             try {
-                // Save Initiative Order
+                // Save Initiative Order (only IDs)
                 const initiativeOrder = Array.from(shelf.children).map(item => item.id);
                 localStorage.setItem('initiativeOrder', JSON.stringify(initiativeOrder));
 
-                // Save Compendium Order
+                // Save Compendium Order (only IDs)
                 const compendiumOrder = Array.from(compendiumShelfInner.children).map(item => item.id);
                 localStorage.setItem('compendiumOrder', JSON.stringify(compendiumOrder));
 
-                // Save individual item data from both shelves
-                const allItems = [...shelf.children, ...compendiumShelfInner.children];
-                allItems.forEach(item => {
+                // Save individual character data to IndexedDB
+                const allCharacters = document.querySelectorAll('.character-card');
+                allCharacters.forEach(item => {
                     const id = item.id;
-                    let itemData;
-                    if (item.classList.contains('character-card')) {
-                        const nameSpan = item.querySelector('.font-bold.text-lg');
-                        const currentHpSpan = item.querySelector('.current-hp');
-                        const totalHpSpan = item.querySelector('.total-hp');
-                        const statusContainer = item.querySelector('.status-container');
-                        const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
+                    const nameSpan = item.querySelector('.font-bold.text-lg');
+                    const currentHpSpan = item.querySelector('.current-hp');
+                    const totalHpSpan = item.querySelector('.total-hp');
+                    const statusContainer = item.querySelector('.status-container');
+                    const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
 
-                        itemData = {
-                            type: 'character',
-                            name: nameSpan ? nameSpan.textContent.trim() : '',
-                            hp: currentHpSpan ? currentHpSpan.textContent.trim() : '',
-                            totalHp: totalHpSpan ? totalHpSpan.textContent.trim() : '',
-                            statuses: statuses,
-                            bgColor: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
-                            bgImageKey: item.dataset.bgImageKey || '',
-                            notes: item.dataset.notes || ''
-                        };
-                    } else if (item.id.startsWith('turn-marker')) {
-                        const turnCounter = item.querySelector('.turn-counter');
-                        itemData = {
-                            type: 'turnMarker',
-                            turn: turnCounter ? turnCounter.textContent.trim() : '1'
-                        };
-                    }
-                    if (itemData) {
-                        localStorage.setItem(id, JSON.stringify(itemData));
-                    }
+                    const characterData = {
+                        name: nameSpan ? nameSpan.textContent.trim() : '',
+                        hp: currentHpSpan ? currentHpSpan.textContent.trim() : '',
+                        totalHp: totalHpSpan ? totalHpSpan.textContent.trim() : '',
+                        statuses: statuses,
+                        bgColor: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
+                        bgImageKey: item.dataset.bgImageKey || '',
+                        notes: item.dataset.notes || ''
+                    };
+                    saveCharacterToIndexedDB(id, characterData);
                 });
+
+                // Save turn marker data (still in localStorage for simplicity, as it's a single item)
+                const turnMarker = document.querySelector('[id^="turn-marker-"]');
+                if (turnMarker) {
+                    const turnCounter = turnMarker.querySelector('.turn-counter');
+                    const turnMarkerData = {
+                        type: 'turnMarker',
+                        turn: turnCounter ? turnCounter.textContent.trim() : '1'
+                    };
+                    localStorage.setItem(turnMarker.id, JSON.stringify(turnMarkerData));
+                }
 
                 localStorage.setItem('isHpHidden', JSON.stringify(isHpHidden));
 
-                // Cleanup orphaned items
-                const allIds = new Set([...initiativeOrder, ...compendiumOrder]);
-                 for (let i = 0; i < localStorage.length; i++) {
-                    const key = localStorage.key(i);
-                    if ((key.startsWith('char-') || key.startsWith('turn-marker-')) && !allIds.has(key)) {
-                        localStorage.removeItem(key);
-                        i--;
-                    }
-                }
-                console.log('State saved to localStorage.');
+                // No longer need to cleanup orphaned items from localStorage character data
+                // as character data is now centrally managed in IndexedDB.
+                console.log('State saved to IndexedDB and localStorage (for order).');
             } catch (e) {
-                console.error("Failed to save state to localStorage:", e);
+                console.error("Failed to save state:", e);
             }
         }
 
@@ -548,21 +582,24 @@
 
             const order = JSON.parse(orderJSON);
             const itemPromises = order.map(async (id) => {
-                const itemJSON = localStorage.getItem(id);
-                if (!itemJSON) return null;
+                // Check if it's a turn marker (still stored directly in localStorage)
+                if (id.startsWith('turn-marker')) {
+                    const turnMarkerJSON = localStorage.getItem(id);
+                    return turnMarkerJSON ? { id, data: JSON.parse(turnMarkerJSON) } : null;
+                } else { // It's a character, load from IndexedDB
+                    const characterData = await loadCharacterFromIndexedDB(id);
+                    if (!characterData) return null;
 
-                const itemData = JSON.parse(itemJSON);
-
-                let bgImageUrl = '';
-                if (itemData.bgImageKey && itemData.bgImageKey.startsWith('indexeddb://')) {
-                    const blob = await loadImageFromIndexedDB(itemData.bgImageKey).catch(e => console.error(e));
-                    if(blob) bgImageUrl = URL.createObjectURL(blob);
-                } else if (itemData.bgImageKey) {
-                    bgImageUrl = itemData.bgImageKey;
+                    let bgImageUrl = '';
+                    if (characterData.bgImageKey && characterData.bgImageKey.startsWith('indexeddb://')) {
+                        const blob = await loadImageFromIndexedDB(characterData.bgImageKey).catch(e => console.error(e));
+                        if(blob) bgImageUrl = URL.createObjectURL(blob);
+                    } else if (characterData.bgImageKey) {
+                        bgImageUrl = characterData.bgImageKey;
+                    }
+                    characterData.bgImageUrl = bgImageUrl;
+                    return { id, data: characterData };
                 }
-
-                itemData.bgImageUrl = bgImageUrl;
-                return { id, data: itemData };
             });
 
             const loadedItems = await Promise.all(itemPromises);
@@ -579,17 +616,13 @@
                 };
                 if (data.type === 'turnMarker') {
                     createTurnMarker(id, data.turn); // Turn marker always goes to main shelf
-                } else if (data.type === 'character') {
+                } else { // It's a character
                     createCharacter(data.name, data.hp, data.totalHp || data.hp, data.statuses, data.notes, options);
                 }
             });
         }
 
         async function loadState() {
-            const hasInitiative = localStorage.getItem('initiativeOrder');
-            const hasCompendium = localStorage.getItem('compendiumOrder');
-            if (!hasInitiative && !hasCompendium) return false;
-
             try {
                 shelf.innerHTML = '';
                 compendiumShelfInner.innerHTML = '';
@@ -598,11 +631,18 @@
                 await loadItemsToShelf('initiativeOrder', shelf);
                 await loadItemsToShelf('compendiumOrder', compendiumShelfInner);
 
-                console.log('State loaded from localStorage.');
+                isHpHidden = JSON.parse(localStorage.getItem('isHpHidden')) || false;
+                if (isHpHidden) {
+                    hideHpButton.textContent = 'Show HP';
+                    hideHpButton.classList.remove('bg-gray-600', 'hover:bg-gray-700');
+                    hideHpButton.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+                }
+
+                console.log('State loaded from IndexedDB and localStorage.');
                 updateActionButtonsState();
-                return true;
+                return shelf.children.length > 0;
             } catch (e) {
-                console.error("Failed to load or parse state from localStorage:", e);
+                console.error("Failed to load or parse state:", e);
                 return false;
             }
         }
@@ -671,6 +711,8 @@
 
                 if (newParent && originalParentId && newParent.id !== originalParentId && !item.id.startsWith('turn-marker')) {
 
+                    // When dragging a character from compendium to shelf, create a new copy
+                    // Instead of moving the existing element, which belongs to compendium state
                     const originalItemData = {
                         name: item.querySelector('.font-bold.text-lg').textContent.trim(),
                         hp: item.querySelector('.current-hp').textContent.trim(),
@@ -680,28 +722,43 @@
                         backgroundColorClass: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
                         backgroundImage: item.style.backgroundImage.slice(5, -2).replace(/["']/g, ""),
                         bgImageKey: item.dataset.bgImageKey || '',
-                        id: item.id
+                        // Do NOT pass original ID, it needs a new ID for the main shelf instance
+                        // id: item.id
                     };
-                    item.id = `char-${crypto.randomUUID()}`;
-                    const originalParent = document.getElementById(originalParentId);
-                    const originalNextSiblingId = item.dataset.originalNextSiblingId;
-                    const originalNextSibling = (originalNextSiblingId && originalNextSiblingId !== 'null') ? document.getElementById(originalNextSiblingId) : null;
-
-                    createCharacter(
-                        originalItemData.name,
-                        originalItemData.hp,
-                        originalItemData.totalHp,
-                        originalItemData.statuses,
-                        originalItemData.notes,
-                        {
-                            id: originalItemData.id,
-                            backgroundColorClass: originalItemData.backgroundColorClass,
-                            backgroundImage: originalItemData.backgroundImage,
-                            bgImageKey: originalItemData.bgImageKey,
-                            parent: originalParent,
-                            insertBeforeSibling: originalNextSibling
-                        }
-                    );
+                    
+                    // Create a new character on the target shelf
+                    // The 'item' that was dragged is automatically re-inserted by the browser,
+                    // we remove it to keep the compendium tidy and insert the new copy.
+                    // This creates a "copy on drag" behavior.
+                    if (originalParentId === 'compendium-shelf-inner' && newParent.id === 'shelf-items') {
+                        // The dragged item is already where it should be after drop, remove the original from compendium
+                        // and then recreate the original in the compendium. This effectively "copies" the item.
+                        const droppedCompendiumItem = document.getElementById(item.id); // This is the actual element that was moved to the shelf
+                        
+                        const tempId = item.id; // Store original ID before it changes
+                        const tempOriginalParent = document.getElementById(originalParentId);
+                        const tempOriginalNextSibling = (item.dataset.originalNextSiblingId && item.dataset.originalNextSiblingId !== 'null') ? document.getElementById(item.dataset.originalNextSiblingId) : null;
+                        
+                        // The item 'item' is now on the shelf. Give it a new ID.
+                        item.id = `char-${crypto.randomUUID()}`;
+                        
+                        // Recreate the original item in the compendium at its original position
+                        createCharacter(
+                            originalItemData.name,
+                            originalItemData.hp,
+                            originalItemData.totalHp,
+                            originalItemData.statuses,
+                            originalItemData.notes,
+                            {
+                                id: tempId, // Use the original ID for the compendium copy
+                                backgroundColorClass: originalItemData.backgroundColorClass,
+                                backgroundImage: originalItemData.backgroundImage,
+                                bgImageKey: originalItemData.bgImageKey,
+                                parent: tempOriginalParent,
+                                insertBeforeSibling: tempOriginalNextSibling
+                            }
+                        );
+                    }
                 }
 
                 delete item.dataset.originalParentId;
@@ -1041,12 +1098,12 @@
             if (!options.id) { // Only animate and save if it's a newly created item
                 newItem.classList.add('pop-in-animation');
                 newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
-                saveState();
             }
             // Ensure compendium layout is refreshed if adding to it, even if not animating
             if (parent.id === 'compendium-shelf-inner') {
                 refreshCompendiumLayout();
             }
+            saveState(); // Ensure state is saved immediately after creating a character
             return newItem;
         }
 
@@ -1072,7 +1129,8 @@
             });
 
             shelf.appendChild(turnMarker);
-            if(!id) saveState();
+            saveState();
+            return turnMarker; // Return the created turn marker
         }
 
         // --- Modal & Menu Logic ---
@@ -1202,14 +1260,27 @@
             e.target.value = null;
         });
 
-        manageCompendiumDataBtn.addEventListener('click', () => {
+        manageCompendiumDataBtn.addEventListener('click', async () => {
             const compendiumItems = Array.from(compendiumShelfInner.children);
-            const exportData = compendiumItems.map(item => {
+            const exportDataPromises = compendiumItems.map(async item => {
                 let imageKey = item.dataset.bgImageKey || '';
-                // Strip non-portable indexedDB keys
-                if (imageKey.startsWith('indexeddb://')) {
-                    imageKey = '';
+                // Only include the image URL if it's not an IndexedDB key
+                let exportedImage = '';
+                if (imageKey && !imageKey.startsWith('indexeddb://')) {
+                    exportedImage = imageKey;
                 }
+                 // If it's an IndexedDB key, try to convert it to base64 for export
+                if (imageKey.startsWith('indexeddb://')) {
+                    const blob = await loadImageFromIndexedDB(imageKey);
+                    if (blob) {
+                        exportedImage = await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                }
+
 
                 return {
                     name: item.querySelector('.font-bold.text-lg').textContent.trim(),
@@ -1217,18 +1288,19 @@
                     totalHp: item.querySelector('.total-hp').textContent.trim(),
                     statuses: Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent),
                     bgColor: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
-                    bgImageKey: imageKey,
+                    bgImageKey: exportedImage, // Use the exported image or empty string
                     notes: item.dataset.notes || ''
                 };
             });
 
+            const exportData = await Promise.all(exportDataPromises);
             const jsonString = JSON.stringify(exportData, null, 2);
             compendiumDataTextarea.value = jsonString;
             compendiumDataTextarea.dataset.originalValue = jsonString;
             compendiumDataModal.classList.remove('hidden');
         });
 
-        closeCompendiumDataModalBtn.addEventListener('click', () => {
+        closeCompendiumDataModalBtn.addEventListener('click', async () => {
             const currentJson = compendiumDataTextarea.value;
             const originalJson = compendiumDataTextarea.dataset.originalValue;
 
@@ -1237,11 +1309,37 @@
                     const importData = JSON.parse(currentJson);
                     if (!Array.isArray(importData)) throw new Error("Data must be an array.");
 
-                    // Clear existing compendium
+                    // Clear existing compendium and associated images
+                    const currentCompendiumItems = Array.from(compendiumShelfInner.children);
+                    for (const item of currentCompendiumItems) {
+                        if (item.dataset.bgImageKey && item.dataset.bgImageKey.startsWith('indexeddb://')) {
+                            await deleteImageFromIndexedDB(item.dataset.bgImageKey);
+                        }
+                        await deleteCharacterFromIndexedDB(item.id);
+                    }
                     compendiumShelfInner.innerHTML = '';
 
+
                     // Import new data
-                    importData.forEach(charData => {
+                    for (const charData of importData) {
+                        let actualBgImageKey = charData.bgImageKey || '';
+                        let displayBgImage = actualBgImageKey;
+
+                        if (actualBgImageKey.startsWith('data:image/')) {
+                            // If it's a base64 string, convert to Blob and save to IndexedDB
+                            try {
+                                const blob = await (await fetch(actualBgImageKey)).blob();
+                                const newImageId = `indexeddb://${crypto.randomUUID()}`;
+                                await saveImageToIndexedDB(newImageId, blob);
+                                actualBgImageKey = newImageId; // Update the key to reference IndexedDB
+                                displayBgImage = URL.createObjectURL(blob); // For display
+                            } catch (e) {
+                                console.error("Error converting base64 image to Blob for IndexedDB:", e);
+                                actualBgImageKey = ''; // Clear if conversion fails
+                                displayBgImage = '';
+                            }
+                        }
+
                         createCharacter(
                             charData.name,
                             charData.hp,
@@ -1251,18 +1349,18 @@
                             {
                                 parent: compendiumShelfInner,
                                 backgroundColorClass: charData.bgColor,
-                                backgroundImage: charData.bgImageKey, // It's a URL if it exists
-                                bgImageKey: charData.bgImageKey
+                                backgroundImage: displayBgImage,
+                                bgImageKey: actualBgImageKey
                             }
                         );
-                    });
+                    }
 
                     refreshCompendiumLayout();
                     saveState();
 
                 } catch (e) {
                     console.error("Failed to import compendium data:", e);
-                    // Optionally, show a more user-friendly error message here
+                    alert("Failed to import compendium data. Please check JSON format.");
                 }
             }
 
@@ -1327,7 +1425,7 @@
         // Event listener for the DND 5e button
         dnd5eImportBtn.addEventListener('click', () => fetchAndImportCharacterData('dnd_5e.json'));
 
-        // NEW: Event listener for the PF2e button
+        // Event listener for the PF2e button
         pf2eImportBtn.addEventListener('click', () => fetchAndImportCharacterData('pf2e_core.json'));
 
 
@@ -1387,24 +1485,38 @@
                 // No compendium characters selected, create a blank one
                 createCharacter('', 10, 10, [], '', {});
             }
-            saveState(); // Save state after adding character(s)
         }
 
         addButton.addEventListener('click', handleAddCharacter);
 
 
-        removeButton.addEventListener('click', () => {
-            document.querySelectorAll('.highlighted').forEach(item => {
+        removeButton.addEventListener('click', async () => {
+            const highlightedItems = document.querySelectorAll('.highlighted');
+            for (const item of highlightedItems) {
                 const wasInCompendium = item.parentElement.id === 'compendium-shelf-inner';
-                localStorage.removeItem(item.id);
+
+                // Delete from IndexedDB if it's a character
+                if (item.classList.contains('character-card')) {
+                    await deleteCharacterFromIndexedDB(item.id);
+                    // Also delete associated image if it was stored in IndexedDB
+                    if (item.dataset.bgImageKey && item.dataset.bgImageKey.startsWith('indexeddb://')) {
+                        await deleteImageFromIndexedDB(item.dataset.bgImageKey);
+                    }
+                }
+                // For turn markers, only delete from localStorage
+                if (item.id.startsWith('turn-marker')) {
+                    localStorage.removeItem(item.id);
+                }
+
                 item.remove();
                 if (wasInCompendium) {
                     refreshCompendiumLayout();
                 }
-            });
+            }
             updateActionButtonsState();
-            saveState();
+            saveState(); // Save state after deletion (important for order persistence)
         });
+
 
         copyButton.addEventListener('click', () => {
             const originals = document.querySelectorAll('.highlighted');
@@ -1460,7 +1572,6 @@
                 };
                 createCharacter(newName, hp, totalHp, statuses, notes, options);
             });
-            saveState();
         });
 
         hideHpButton.addEventListener('click', () => {
@@ -1484,15 +1595,28 @@
         });
 
         clearAllDataButton.addEventListener('click', async () => {
+            // Clear localStorage entries
             localStorage.clear();
+
+            // Clear IndexedDB object stores
             if (db) {
-                const transaction = db.transaction([IMAGE_STORE_NAME], 'readwrite');
-                const store = transaction.objectStore(IMAGE_STORE_NAME);
-                store.clear();
+                const transaction = db.transaction([IMAGE_STORE_NAME, CHARACTER_STORE_NAME], 'readwrite');
+                const imageStore = transaction.objectStore(IMAGE_STORE_NAME);
+                const characterStore = transaction.objectStore(CHARACTER_STORE_NAME);
+                
+                await new Promise((resolve, reject) => {
+                    const imgClearRequest = imageStore.clear();
+                    imgClearRequest.onsuccess = () => {
+                        const charClearRequest = characterStore.clear();
+                        charClearRequest.onsuccess = () => resolve();
+                        charClearRequest.onerror = (event) => reject(event.target.error);
+                    };
+                    imgClearRequest.onerror = (event) => reject(event.target.error);
+                }).catch(e => console.error("Failed to clear IndexedDB stores:", e));
             }
             shelf.innerHTML = '';
             compendiumShelfInner.innerHTML = '';
-            await initializeApp();
+            await initializeApp(); // Re-initialize the app to default state
         });
 
         compendiumHandle.addEventListener('click', () => {
@@ -1626,19 +1750,11 @@
             // Add a goblin template to the compendium
             createCharacter('Goblin', 7, 7, [], goblinNotes, { ...goblinOptions, parent: compendiumShelfInner });
 
-            saveState(); // Perform initial save
         }
 
         async function initializeApp() {
             populateColorMenu();
             await openIndexedDB();
-
-            isHpHidden = JSON.parse(localStorage.getItem('isHpHidden')) || false;
-            if (isHpHidden) {
-                hideHpButton.textContent = 'Show HP';
-                hideHpButton.classList.remove('bg-gray-600', 'hover:bg-gray-700');
-                hideHpButton.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
-            }
 
             if (!await loadState()) {
                 initializeDefaultScene();
