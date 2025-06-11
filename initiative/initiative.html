@@ -238,6 +238,87 @@
         
         const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
 
+        // --- IndexedDB Setup ---
+        let db;
+        const DB_NAME = 'initiativeTrackerDB';
+        const DB_VERSION = 1;
+        const IMAGE_STORE_NAME = 'images';
+
+        function openIndexedDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                request.onupgradeneeded = (event) => {
+                    db = event.target.result;
+                    if (!db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
+                        db.createObjectStore(IMAGE_STORE_NAME);
+                    }
+                };
+
+                request.onsuccess = (event) => {
+                    db = event.target.result;
+                    console.log('IndexedDB opened successfully');
+                    resolve(db);
+                };
+
+                request.onerror = (event) => {
+                    console.error('IndexedDB error:', event.target.errorCode);
+                    reject(event.target.errorCode);
+                };
+            });
+        }
+
+        async function saveImageToIndexedDB(id, blob) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([IMAGE_STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(IMAGE_STORE_NAME);
+                const request = store.put(blob, id); // Store blob with the generated ID
+
+                request.onsuccess = () => {
+                    resolve();
+                };
+
+                request.onerror = (event) => {
+                    console.error('Error saving image to IndexedDB:', event.target.errorCode);
+                    reject(event.target.errorCode);
+                };
+            });
+        }
+
+        async function loadImageFromIndexedDB(id) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([IMAGE_STORE_NAME], 'readonly');
+                const store = transaction.objectStore(IMAGE_STORE_NAME);
+                const request = store.get(id);
+
+                request.onsuccess = (event) => {
+                    resolve(event.target.result); // This will be the Blob
+                };
+
+                request.onerror = (event) => {
+                    console.error('Error loading image from IndexedDB:', event.target.errorCode);
+                    reject(event.target.errorCode);
+                };
+            });
+        }
+
+        async function deleteImageFromIndexedDB(id) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([IMAGE_STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(IMAGE_STORE_NAME);
+                const request = store.delete(id);
+
+                request.onsuccess = () => {
+                    resolve();
+                };
+
+                request.onerror = (event) => {
+                    console.error('Error deleting image from IndexedDB:', event.target.errorCode);
+                    reject(event.target.errorCode);
+                };
+            });
+        }
+
         // --- Cookie Functions for Persistence ---
         function setCookie(name, value, days) {
             let expires = "";
@@ -273,13 +354,28 @@
                     const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
                     const bgColorClass = Array.from(item.classList).find(cls => colorPalette.includes(cls));
                     
+                    let bgImage = item.style.backgroundImage;
+                    let indexedDbImageId = item.dataset.indexedDbImageId || ''; // Get the stored IndexedDB ID if it exists
+
+                    // Only save image URLs, not data:image URLs, and prioritize IndexedDB ID
+                    if (indexedDbImageId) {
+                        bgImage = `indexeddb://${indexedDbImageId}`; // Store a reference to IndexedDB
+                    } else if (bgImage && bgImage.startsWith('url("data:image/')) {
+                        bgImage = ''; // Clear data:image URLs
+                    } else if (bgImage) {
+                         // Extract the URL from url("...")
+                        const urlMatch = bgImage.match(/^url\(['"]?(.*?)['"]?\)$/);
+                        bgImage = urlMatch ? urlMatch[1] : '';
+                    }
+
+
                     state.push({
                         type: 'character',
                         name: nameSpan ? nameSpan.textContent.trim() : '',
                         hp: hpSpan ? hpSpan.textContent.trim() : '',
                         statuses: statuses,
                         bgColor: bgColorClass || '',
-                        bgImage: item.style.backgroundImage || ''
+                        bgImage: bgImage || '' // Ensure it's an empty string if null/undefined
                     });
                 }
             });
@@ -287,28 +383,53 @@
             console.log('State saved to cookie.');
         }
 
-        function loadStateFromCookie() {
+        async function loadStateFromCookie() {
             const savedState = getCookie('initiativeTrackerState');
             if (savedState) {
                 try {
                     const state = JSON.parse(savedState);
                     shelf.innerHTML = ''; // Clear existing elements
 
-                    state.forEach(itemData => {
+                    // Use a for...of loop to await async operations within the loop
+                    for (const itemData of state) {
                         if (itemData.type === 'turnMarker') {
                             createTurnMarker();
                         } else if (itemData.type === 'character') {
-                            createCharacter(
+                            let actualBackgroundImage = itemData.bgImage;
+                            let indexedDbImageId = '';
+
+                            if (itemData.bgImage.startsWith('indexeddb://')) {
+                                indexedDbImageId = itemData.bgImage.substring('indexeddb://'.length);
+                                try {
+                                    const blob = await loadImageFromIndexedDB(indexedDbImageId);
+                                    if (blob) {
+                                        actualBackgroundImage = URL.createObjectURL(blob);
+                                    } else {
+                                        console.warn(`Image with ID ${indexedDbImageId} not found in IndexedDB.`);
+                                        actualBackgroundImage = ''; // Fallback if image not found
+                                    }
+                                } catch (e) {
+                                    console.error(`Failed to load image from IndexedDB for ID ${indexedDbImageId}:`, e);
+                                    actualBackgroundImage = '';
+                                }
+                            }
+                            
+                            const characterOptions = {
+                                backgroundColorClass: itemData.bgColor, 
+                                backgroundImage: actualBackgroundImage 
+                            };
+                            const characterElement = createCharacter(
                                 itemData.name, 
                                 itemData.hp, 
                                 itemData.statuses, 
-                                { 
-                                    backgroundColorClass: itemData.bgColor, 
-                                    backgroundImage: itemData.bgImage 
-                                }
+                                characterOptions
                             );
+                            if (indexedDbImageId) {
+                                characterElement.dataset.indexedDbImageId = indexedDbImageId;
+                                characterElement.dataset.objectUrl = actualBackgroundImage; // Store object URL for revoking
+                            }
                         }
-                    });
+                    }
                     console.log('State loaded from cookie.');
                     updateActionButtonsState(); // Update button states after loading
                     return true;
@@ -533,7 +654,7 @@
             newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
             
             if (backgroundImage) {
-                newItem.style.backgroundImage = backgroundImage;
+                newItem.style.backgroundImage = `url('${backgroundImage}')`;
             }
             
             const nameContent = name || '';
@@ -572,6 +693,8 @@
             newItem.classList.add('pop-in-animation');
             newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
             saveStateToCookie(); // Save state after a new character is created
+
+            return newItem; // Return the created item
         }
         
         function createTurnMarker() {
@@ -639,6 +762,13 @@
                     const selectedItems = document.querySelectorAll('.highlighted');
                     selectedItems.forEach(item => {
                         item.style.backgroundImage = ''; // Clear image if color is set
+                        // Also clear any IndexedDB image ID
+                        delete item.dataset.indexedDbImageId;
+                        if (item.dataset.objectUrl) {
+                            URL.revokeObjectURL(item.dataset.objectUrl);
+                            delete item.dataset.objectUrl;
+                        }
+
                         item.classList.remove(...colorPalette);
                         item.classList.add(color);
                     });
@@ -677,6 +807,12 @@
                     // Remove existing color classes when applying an image
                     item.classList.remove(...colorPalette); 
                     item.style.backgroundImage = `url('${url}')`;
+                    // Clear IndexedDB related data if an external URL is applied
+                    delete item.dataset.indexedDbImageId;
+                    if (item.dataset.objectUrl) {
+                        URL.revokeObjectURL(item.dataset.objectUrl);
+                        delete item.dataset.objectUrl;
+                    }
                 });
             }
             contextMenu.classList.add('hidden');
@@ -684,20 +820,29 @@
             saveStateToCookie(); // Save state after image URL change
         });
 
-        imageFileInput.addEventListener('change', (e) => {
+        imageFileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (file) {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const imageUrl = event.target.result;
+                const blob = file; // The file object is already a Blob
+                const imageId = crypto.randomUUID(); // Generate a unique ID for the image
+
+                try {
+                    await saveImageToIndexedDB(imageId, blob);
+                    const objectUrl = URL.createObjectURL(blob);
+
                     document.querySelectorAll('.highlighted').forEach(item => {
                         // Remove existing color classes when applying an image
                         item.classList.remove(...colorPalette);
-                        item.style.backgroundImage = `url('${imageUrl}')`;
+                        item.style.backgroundImage = `url('${objectUrl}')`;
+                        item.dataset.indexedDbImageId = imageId; // Store the ID for persistence
+                        item.dataset.objectUrl = objectUrl; // Store the object URL for revoking
                     });
-                    saveStateToCookie(); // Save state after image file change
-                };
-                reader.readAsDataURL(file);
+                    saveStateToCookie(); // Save state after local image change (now referencing IndexedDB ID)
+
+                } catch (error) {
+                    console.error('Failed to save or load image from IndexedDB:', error);
+                    // Optionally, provide user feedback about the failure
+                }
             }
             contextMenu.classList.add('hidden');
             e.target.value = null; // Reset file input
@@ -722,8 +867,24 @@
 
         addButton.addEventListener('click', () => createCharacter('', 10)); // createCharacter already calls saveStateToCookie()
 
-        removeButton.addEventListener('click', () => {
-            document.querySelectorAll('.highlighted').forEach(item => item.remove());
+        removeButton.addEventListener('click', async () => {
+            const selectedItems = document.querySelectorAll('.highlighted');
+            for (const item of selectedItems) {
+                // Clean up IndexedDB image and revoke Object URL if applicable
+                if (item.dataset.indexedDbImageId) {
+                    try {
+                        await deleteImageFromIndexedDB(item.dataset.indexedDbImageId);
+                        console.log(`Deleted image ${item.dataset.indexedDbImageId} from IndexedDB.`);
+                    } catch (e) {
+                        console.error(`Error deleting image ${item.dataset.indexedDbImageId} from IndexedDB:`, e);
+                    }
+                }
+                if (item.dataset.objectUrl) {
+                    URL.revokeObjectURL(item.dataset.objectUrl);
+                    console.log(`Revoked Object URL: ${item.dataset.objectUrl}`);
+                }
+                item.remove();
+            }
             updateActionButtonsState();
             saveStateToCookie(); // Save state after removal
         });
@@ -738,7 +899,6 @@
                     const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
                     const hp = original.querySelector('.text-2xl.font-mono').textContent.trim();
                     const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
-                    const backgroundImage = original.style.backgroundImage;
                     const backgroundColorClass = Array.from(original.classList).find(cls => colorPalette.includes(cls));
                     
                     let newName = originalName;
@@ -767,12 +927,31 @@
                         }
                     }
                     
+                    // For copied characters, if the original had an IndexedDB image,
+                    // we'll copy the reference (ID) but won't duplicate the blob in IndexedDB.
+                    // A new object URL will be created when the character is recreated.
+                    const originalBgImage = original.style.backgroundImage;
+                    const originalIndexedDbImageId = original.dataset.indexedDbImageId || '';
+
                     const options = {
                         insertionElement: insertionPoint,
-                        backgroundImage,
-                        backgroundColorClass
+                        backgroundColorClass: backgroundColorClass
                     };
-                    createCharacter(newName, hp, statuses, options); // createCharacter already calls saveStateToCookie()
+
+                    // If it's an IndexedDB image, pass the ID for creation, otherwise pass the URL
+                    if (originalIndexedDbImageId) {
+                        options.backgroundImage = `indexeddb://${originalIndexedDbImageId}`; // Reference existing IndexedDB image
+                    } else if (originalBgImage && originalBgImage.startsWith('url(')) {
+                        options.backgroundImage = originalBgImage.substring(4, originalBgImage.length - 1).replace(/['"]/g, ''); // Extract URL
+                    }
+
+                    const newCharacter = createCharacter(newName, hp, statuses, options); // createCharacter already calls saveStateToCookie()
+                    
+                    // If the original had an IndexedDB image, set the dataset for the new character too
+                    if (originalIndexedDbImageId) {
+                        newCharacter.dataset.indexedDbImageId = originalIndexedDbImageId;
+                        // The createCharacter will set the objectUrl upon creation based on the ID
+                    }
                     lastOriginal = insertionPoint.nextElementSibling; // The new insertion point is the card we just created
                 });
             }
@@ -885,11 +1064,16 @@
         }
         
         // --- Initial App Start ---
-        function initializeApp() {
+        async function initializeApp() {
             populateColorMenu();
-            // Attempt to load state from cookie, if not found, initialize default scene
-            if (!loadStateFromCookie()) {
-                initializeDefaultScene();
+            try {
+                await openIndexedDB();
+                if (!await loadStateFromCookie()) {
+                    initializeDefaultScene();
+                }
+            } catch (e) {
+                console.error("Failed to initialize IndexedDB or load state:", e);
+                initializeDefaultScene(); // Fallback to default if IndexedDB fails
             }
         }
         
