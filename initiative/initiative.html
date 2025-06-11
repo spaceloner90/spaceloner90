@@ -118,9 +118,6 @@
         .text-readable {
             text-shadow: 0 1px 3px rgba(0,0,0,0.6);
         }
-
-        /* Styles for the confirmation modal */
-        /* REMOVED .confirm-modal-overlay, .confirm-modal-content, .confirm-modal-buttons */
     </style>
 </head>
 <body class="bg-gray-100">
@@ -215,9 +212,6 @@
         </div>
     </div>
 
-    <!-- Confirmation Modal for Clear All Data (REMOVED FROM HTML) -->
-
-
     <!-- JavaScript Logic -->
     <script>
         // Get the buttons and containers
@@ -238,7 +232,7 @@
         const imageUrlInput = document.getElementById('image-url-input');
         const applyUrlButton = document.getElementById('apply-url-btn');
         const imageFileInput = document.getElementById('image-file-input');
-        const clearAllDataButton = document.getElementById('clear-all-data-btn'); // New button reference
+        const clearAllDataButton = document.getElementById('clear-all-data-btn');
 
         // --- Data ---
         const colorPalette = [
@@ -368,8 +362,12 @@
         function saveStateToCookie() {
             const state = [];
             Array.from(shelf.children).forEach(item => {
-                if (item.classList.contains('bg-black')) { // It's the turn marker
-                    state.push({ type: 'turnMarker' });
+                if (item.id === 'turn-marker') {
+                    const turnCounter = item.querySelector('.turn-counter');
+                    state.push({ 
+                        type: 'turnMarker',
+                        turn: turnCounter ? turnCounter.textContent.trim() : '1'
+                    });
                 } else { // It's a character card
                     const nameSpan = item.querySelector('.font-bold.text-lg');
                     const hpSpan = item.querySelector('.text-2xl.font-mono');
@@ -379,13 +377,11 @@
                     const bgColorClass = Array.from(item.classList).find(cls => colorPalette.includes(cls));
                     
                     let bgImage = item.style.backgroundImage;
-                    let indexedDbImageId = item.dataset.indexedDbImageId || ''; // Get the stored IndexedDB ID if it exists
+                    let indexedDbImageId = item.dataset.indexedDbImageId || ''; 
 
-                    // Prioritize IndexedDB ID for saving
                     if (indexedDbImageId) {
-                        bgImage = `indexeddb://${indexedDbImageId}`; // Store a reference to IndexedDB
+                        bgImage = `indexeddb://${indexedDbImageId}`;
                     } else if (bgImage) {
-                         // Extract the raw URL from url("...") for external images
                         const urlMatch = bgImage.match(/^url\(['"]?(.*?)['"]?\)$/);
                         bgImage = urlMatch ? urlMatch[1] : '';
                     }
@@ -396,11 +392,11 @@
                         hp: hpSpan ? hpSpan.textContent.trim() : '',
                         statuses: statuses,
                         bgColor: bgColorClass || '',
-                        bgImage: bgImage || '' // Ensure it's an empty string if null/undefined
+                        bgImage: bgImage || ''
                     });
                 }
             });
-            setCookie('initiativeTrackerState', JSON.stringify(state), 365); // Save for 1 year
+            setCookie('initiativeTrackerState', JSON.stringify(state), 365);
             console.log('State saved to cookie.');
         }
 
@@ -409,12 +405,11 @@
             if (savedState) {
                 try {
                     const state = JSON.parse(savedState);
-                    shelf.innerHTML = ''; // Clear existing elements
+                    shelf.innerHTML = ''; 
 
-                    // Use a for...of loop to await async operations within the loop
                     for (const itemData of state) {
                         if (itemData.type === 'turnMarker') {
-                            createTurnMarker();
+                            createTurnMarker(itemData.turn);
                         } else if (itemData.type === 'character') {
                             let actualBackgroundImage = itemData.bgImage;
                             let indexedDbImageId = '';
@@ -427,7 +422,7 @@
                                         actualBackgroundImage = URL.createObjectURL(blob);
                                     } else {
                                         console.warn(`Image with ID ${indexedDbImageId} not found in IndexedDB.`);
-                                        actualBackgroundImage = ''; // Fallback if image not found
+                                        actualBackgroundImage = '';
                                     }
                                 } catch (e) {
                                     console.error(`Failed to load image from IndexedDB for ID ${indexedDbImageId}:`, e);
@@ -437,21 +432,18 @@
                             
                             const characterOptions = {
                                 backgroundColorClass: itemData.bgColor, 
-                                // Pass the raw ID if it's an IndexedDB image, otherwise the URL
                                 backgroundImage: itemData.bgImage.startsWith('indexeddb://') ? itemData.bgImage : actualBackgroundImage 
                             };
-                            const characterElement = createCharacter(
+                            createCharacter(
                                 itemData.name, 
                                 itemData.hp, 
                                 itemData.statuses, 
                                 characterOptions
                             );
-                            // If it was an IndexedDB image, the createCharacter function already set the dataset.indexedDbImageId
-                            // and objectUrl internally based on the 'indexeddb://ID' format.
                         }
                     }
                     console.log('State loaded from cookie.');
-                    updateActionButtonsState(); // Update button states after loading
+                    updateActionButtonsState();
                     return true;
                 } catch (e) {
                     console.error("Error parsing saved state from cookie:", e);
@@ -504,16 +496,14 @@
             });
             item.addEventListener('dragend', () => {
                 item.classList.remove('dragging');
-                saveStateToCookie(); // Save state after drag and drop
+                saveStateToCookie(); 
             });
         }
 
         function initializeSelectable(item) {
-            // Only make character cards selectable, not the turn marker
-            if (item.classList.contains('bg-black')) return;
+            if (item.id === 'turn-marker') return;
 
             item.addEventListener('click', (event) => {
-                // Modified: removed condition `isClickOnIcon` to prevent status icons from being tap targets for dismissal
                 if (event.target.getAttribute('contenteditable') === 'true') return;
                 
                 if (event.shiftKey) {
@@ -523,8 +513,6 @@
                     const selectedCount = document.querySelectorAll('.highlighted').length;
 
                     if (isAlreadySelected && selectedCount > 1) {
-                         // If already selected and multiple items are selected, don't deselect others
-                         // This allows for individual interaction without losing group selection immediately
                          return;
                     }
                     
@@ -543,37 +531,25 @@
             const resolveHp = () => {
                 const originalHp = parseInt(hpSpan.dataset.originalHp, 10);
                 const expression = hpSpan.textContent.trim();
-                if (isNaN(originalHp)) return; // Ensure original HP is a number
+                if (isNaN(originalHp)) return; 
 
                 let newHp;
                 try {
-                    // Sanitize the expression: allow digits, +, -, *, /, and spaces.
-                    // This is a simplified regex; for complex calculators, a full parser is needed.
-                    const sanitizedExpression = expression.replace(/\s/g, ''); // Remove all spaces
-                    
-                    // Allow basic arithmetic: digits, +, -, *, /
-                    // If you only want +, -, restrict this regex.
-                    const validCharsRegex = /^[\d+\-*/.]+$/; // Added / and . for decimals/division
+                    const sanitizedExpression = expression.replace(/\s/g, ''); 
+                    const validCharsRegex = /^[\d+\-*/.]+$/; 
                     if (!validCharsRegex.test(sanitizedExpression)) {
                         throw new Error("Invalid characters or format in HP expression.");
                     }
-
-                    // Use the Function constructor for safe evaluation of simple arithmetic.
-                    // Wrap the expression in parentheses to ensure it's evaluated as a whole.
-                    // This is generally safer than 'eval()' because it runs in its own scope.
                     newHp = new Function('return (' + sanitizedExpression + ')')();
-
-                    // Ensure newHp is a finite number
                     if (!Number.isFinite(newHp)) {
                         throw new Error("Invalid calculation result.");
                     }
-
                 } catch (error) {
                     console.error("HP calculation error:", error);
-                    newHp = originalHp; // Revert to original HP on error
+                    newHp = originalHp; 
                 }
-                hpSpan.textContent = Math.round(newHp); // Round to integer HP
-                saveStateToCookie(); // Save state after HP change
+                hpSpan.textContent = Math.round(newHp);
+                saveStateToCookie(); 
             };
             
             hpSpan.addEventListener('blur', resolveHp);
@@ -582,8 +558,7 @@
                 else if (e.key === 'Escape') { hpSpan.textContent = hpSpan.dataset.originalHp; hpSpan.blur(); }
             });
 
-            // Handle name changes separately
-            const nameSpan = hpSpan.parentElement.previousElementSibling; // Assuming HP span is under HP label, and name is sibling to HP div
+            const nameSpan = hpSpan.parentElement.previousElementSibling;
             if (nameSpan && nameSpan.getAttribute('contenteditable') === 'true') {
                  nameSpan.addEventListener('blur', saveStateToCookie);
                  nameSpan.addEventListener('keydown', (e) => {
@@ -596,8 +571,7 @@
             item.addEventListener('contextmenu', e => {
                 e.preventDefault();
                 
-                // If the item is the turn marker, don't show context menu
-                if (item.classList.contains('bg-black')) return;
+                if (item.id === 'turn-marker') return;
 
                 if (!item.classList.contains('highlighted')) {
                     document.querySelectorAll('.highlighted').forEach(el => el.classList.remove('highlighted'));
@@ -611,21 +585,12 @@
             });
         }
 
-
-        // No longer query all .draggable on load, as they are created dynamically
-        // document.querySelectorAll('.draggable').forEach(item => {
-        //     initializeDraggable(item);
-        //     initializeSelectable(item);
-        //     initializeContextMenu(item);
-        // });
-
         // --- Drag & Drop Logic ---
         shelf.addEventListener('dragover', e => {
             e.preventDefault();
             const draggingItem = document.querySelector('.dragging');
             if (!draggingItem) return;
 
-            // Pass both X and Y coordinates to the placement function
             const afterElement = getDragAfterElement(shelf, e.clientX, e.clientY);
             
             if (afterElement == null) {
@@ -640,20 +605,14 @@
 
             return draggableElements.reduce((closest, child) => {
                 const box = child.getBoundingClientRect();
-
-                // Check if the cursor is vertically within the element's bounds.
-                // This is the key change to handle multiple rows correctly.
                 if (y > box.top && y < box.bottom) {
                     const offset = x - box.left - box.width / 2;
-                    // We are looking for an element that is to the right of the cursor (offset < 0)
-                    // and is the closest one on its right.
                     if (offset < 0 && offset > closest.offset) {
                         return { offset: offset, element: child };
                     } else {
                         return closest;
                     }
                 }
-                // If not on the same vertical plane, keep the previous closest.
                 return closest;
 
             }, { offset: Number.NEGATIVE_INFINITY }).element;
@@ -663,34 +622,29 @@
             const { 
                 insertionElement = null, 
                 backgroundColorClass = null, 
-                backgroundImage = '' // Can be a direct URL or 'indexeddb://ID'
+                backgroundImage = ''
             } = options;
 
             const newItem = document.createElement('div');
-            
-            // Assign a color from the palette, or use the one provided for loading
             const newColor = backgroundColorClass || colorPalette[colorIndex++ % colorPalette.length];
             newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
             
-            // NEW LOGIC FOR BACKGROUND IMAGE HANDLING
             if (backgroundImage.startsWith('indexeddb://')) {
                 const imageId = backgroundImage.substring('indexeddb://'.length);
-                newItem.dataset.indexedDbImageId = imageId; // Store the ID on the new item
-                // When character is created from a copy, we need to load the blob
+                newItem.dataset.indexedDbImageId = imageId;
                 loadImageFromIndexedDB(imageId).then(blob => {
                     if (blob) {
                         const objectUrl = URL.createObjectURL(blob);
                         newItem.style.backgroundImage = `url('${objectUrl}')`;
-                        newItem.dataset.objectUrl = objectUrl; // Store object URL for revoking later
+                        newItem.dataset.objectUrl = objectUrl;
                     } else {
                         console.warn(`Copied image with ID ${imageId} not found in IndexedDB.`);
                     }
                 }).catch(e => {
                     console.error(`Error loading copied IndexedDB image for ID ${imageId}:`, e);
                 });
-            } else if (backgroundImage) { // Handles external URLs or data URLs directly passed (but not from file input)
+            } else if (backgroundImage) {
                 newItem.style.backgroundImage = `url('${backgroundImage}')`;
-                // Ensure no leftover IndexedDB ID if an external URL is explicitly set
                 delete newItem.dataset.indexedDbImageId;
                 if (newItem.dataset.objectUrl) {
                     URL.revokeObjectURL(newItem.dataset.objectUrl);
@@ -714,15 +668,14 @@
             const statusContainer = newItem.querySelector('.status-container');
             statuses.forEach(symbol => {
                  const statusIcon = document.createElement('span');
-                 statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable"; // Changed cursor to default
-                 // Removed click listener for statusIcon dismissal
+                 statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
                  statusIcon.textContent = symbol;
                  statusContainer.appendChild(statusIcon);
             });
             
             initializeHpField(newItem.querySelector('.text-2xl.font-mono'));
             initializeDraggable(newItem);
-            initializeSelectable(newItem); // Character cards are selectable
+            initializeSelectable(newItem);
             initializeContextMenu(newItem);
             
             if(insertionElement) insertionElement.after(newItem);
@@ -730,16 +683,38 @@
 
             newItem.classList.add('pop-in-animation');
             newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
-            saveStateToCookie(); // Save state after a new character is created
+            saveStateToCookie(); 
 
-            return newItem; // Return the created item
+            return newItem; 
         }
         
-        function createTurnMarker() {
+        // *** MODIFIED: Function now creates an L-shaped marker with horizontal text ***
+        function createTurnMarker(turn = '1') {
             const turnMarker = document.createElement('div');
-            turnMarker.className = 'draggable bg-black rounded-full w-2 h-56 shadow-lg self-center';
+            turnMarker.id = 'turn-marker';
+            // The draggable container is now the L-shape itself, created with flexbox.
+            // It will align with other items in the main shelf container.
+            turnMarker.className = 'draggable flex items-end h-56'; // Height matches characters
+
+            turnMarker.innerHTML = `
+                <!-- Vertical bar -->
+                <div class="w-4 h-full bg-black rounded-l-lg"></div>
+                <!-- Horizontal box with text -->
+                <div class="bg-black text-white p-2 rounded-r-lg shadow-lg">
+                    <div class="text-xs font-semibold uppercase text-white/80 select-none">Turn</div>
+                    <span class="turn-counter text-2xl font-mono" contenteditable="true">${turn}</span>
+                </div>
+            `;
+            
             initializeDraggable(turnMarker);
-            // Turn marker is not selectable or does not have context menu
+            
+            // Add event listener to save state when the counter is manually edited
+            const turnCounterSpan = turnMarker.querySelector('.turn-counter');
+            turnCounterSpan.addEventListener('blur', saveStateToCookie);
+            turnCounterSpan.addEventListener('keydown', (e) => {
+                 if (e.key === 'Enter') { e.preventDefault(); turnCounterSpan.blur(); }
+            });
+
             shelf.appendChild(turnMarker);
         }
 
@@ -760,35 +735,31 @@
                 symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${(statusSymbols.indexOf(symbol) + 1) % 10}</span>`;
                 
                 symbolButton.addEventListener('click', () => {
-                    // Check if all selected items already have this status
                     if (allHaveStatus) {
-                        // If all have it, remove it from all selected items
                         selectedItems.forEach(item => {
                             item.querySelectorAll('.status-container span').forEach(icon => {
                                 if (icon.textContent === symbol) icon.remove();
                             });
                         });
                     } else {
-                        // If not all have it, add it to those that don't
                         selectedItems.forEach(item => {
                             if (!Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent).includes(symbol)) {
                                 const statusIcon = document.createElement('span');
-                                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable"; // Changed cursor to default
-                                // Removed click listener for statusIcon dismissal
+                                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
                                 statusIcon.textContent = symbol;
                                 item.querySelector('.status-container').appendChild(statusIcon);
                             }
                         });
                     }
-                    populateSymbolModal(selectedItems); // Re-populate to update selection visual
-                    saveStateToCookie(); // Save state after status changes
+                    populateSymbolModal(selectedItems);
+                    saveStateToCookie(); 
                 });
                 symbolGrid.appendChild(symbolButton);
             });
         }
         
         function populateColorMenu() {
-            colorGrid.innerHTML = ''; // Clear previous swatches
+            colorGrid.innerHTML = '';
             colorPalette.forEach(color => {
                 const swatch = document.createElement('button');
                 swatch.className = `w-8 h-8 rounded-full ${color} border-2 border-white/50 hover:scale-110 transition-transform`;
@@ -796,8 +767,7 @@
                 swatch.addEventListener('click', () => {
                     const selectedItems = document.querySelectorAll('.highlighted');
                     selectedItems.forEach(item => {
-                        item.style.backgroundImage = ''; // Clear image if color is set
-                        // Also clear any IndexedDB image ID
+                        item.style.backgroundImage = ''; 
                         delete item.dataset.indexedDbImageId;
                         if (item.dataset.objectUrl) {
                             URL.revokeObjectURL(item.dataset.objectUrl);
@@ -808,7 +778,7 @@
                         item.classList.add(color);
                     });
                     contextMenu.classList.add('hidden');
-                    saveStateToCookie(); // Save state after color change
+                    saveStateToCookie(); 
                 });
                 colorGrid.appendChild(swatch);
             });
@@ -838,7 +808,6 @@
         applyUrlButton.addEventListener('click', async () => {
             const url = imageUrlInput.value.trim();
             if (url) {
-                // Check if the URL is a data:image URL
                 if (url.startsWith('data:image/')) {
                     const parts = url.match(/^data:(image\/.+);base64,(.*)$/);
                     if (parts && parts.length === 3) {
@@ -849,17 +818,15 @@
 
                         try {
                             await saveImageToIndexedDB(imageId, blob);
-                            // Set background image using the original data URL
                             document.querySelectorAll('.highlighted').forEach(item => {
                                 item.classList.remove(...colorPalette); 
                                 item.style.backgroundImage = `url('${url}')`;
-                                item.dataset.indexedDbImageId = imageId; // Store IndexedDB ID
-                                item.dataset.objectUrl = url; // Use data URL as object URL for consistency
+                                item.dataset.indexedDbImageId = imageId;
+                                item.dataset.objectUrl = url;
                             });
-                            saveStateToCookie(); // Save state with IndexedDB ID
+                            saveStateToCookie(); 
                         } catch (error) {
                             console.error('Failed to save data:image to IndexedDB:', error);
-                            // Fallback to temporary display if save fails
                             document.querySelectorAll('.highlighted').forEach(item => {
                                 item.classList.remove(...colorPalette); 
                                 item.style.backgroundImage = `url('${url}')`;
@@ -871,19 +838,17 @@
                     } else {
                         console.error('Invalid data:image format.');
                     }
-                } else { // It's a regular external URL
+                } else { 
                     document.querySelectorAll('.highlighted').forEach(item => {
-                        // Remove existing color classes when applying an image
                         item.classList.remove(...colorPalette); 
                         item.style.backgroundImage = `url('${url}')`;
-                        // Clear IndexedDB related data if an external URL is applied
                         delete item.dataset.indexedDbImageId;
                         if (item.dataset.objectUrl) {
                             URL.revokeObjectURL(item.dataset.objectUrl);
                             delete item.dataset.objectUrl;
                         }
                     });
-                    saveStateToCookie(); // Save state after image URL change
+                    saveStateToCookie();
                 }
             }
             contextMenu.classList.add('hidden');
@@ -893,29 +858,27 @@
         imageFileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (file) {
-                const blob = file; // The file object is already a Blob
-                const imageId = crypto.randomUUID(); // Generate a unique ID for the image
+                const blob = file; 
+                const imageId = crypto.randomUUID(); 
 
                 try {
                     await saveImageToIndexedDB(imageId, blob);
                     const objectUrl = URL.createObjectURL(blob);
 
                     document.querySelectorAll('.highlighted').forEach(item => {
-                        // Remove existing color classes when applying an image
                         item.classList.remove(...colorPalette);
                         item.style.backgroundImage = `url('${objectUrl}')`;
-                        item.dataset.indexedDbImageId = imageId; // Store the ID for persistence
-                        item.dataset.objectUrl = objectUrl; // Store the object URL for revoking
+                        item.dataset.indexedDbImageId = imageId; 
+                        item.dataset.objectUrl = objectUrl; 
                     });
-                    saveStateToCookie(); // Save state after local image change (now referencing IndexedDB ID)
+                    saveStateToCookie(); 
 
                 } catch (error) {
                     console.error('Failed to save or load image from IndexedDB:', error);
-                    // Optionally, provide user feedback about the failure
                 }
             }
             contextMenu.classList.add('hidden');
-            e.target.value = null; // Reset file input
+            e.target.value = null; 
         });
 
         // --- Button & Keyboard Logic ---
@@ -923,7 +886,17 @@
             const lastItem = shelf.querySelector('.draggable:last-child');
             if(lastItem) {
                 shelf.insertBefore(lastItem, shelf.firstChild);
-                saveStateToCookie(); // Save state after turn change
+                
+                const turnMarker = document.getElementById('turn-marker');
+                if (turnMarker && lastItem.id === 'turn-marker') {
+                    const counter = turnMarker.querySelector('.turn-counter');
+                    let currentTurn = parseInt(counter.textContent, 10);
+                    if (!isNaN(currentTurn) && currentTurn > 1) {
+                        counter.textContent = currentTurn - 1;
+                    }
+                }
+                
+                saveStateToCookie(); 
             }
         });
 
@@ -931,24 +904,33 @@
             const firstItem = shelf.querySelector('.draggable');
             if(firstItem) {
                 shelf.appendChild(firstItem);
-                saveStateToCookie(); // Save state after turn change
+                
+                const turnMarker = document.getElementById('turn-marker');
+                if (turnMarker && firstItem.id === 'turn-marker') {
+                    const counter = turnMarker.querySelector('.turn-counter');
+                    let currentTurn = parseInt(counter.textContent, 10);
+                    if (!isNaN(currentTurn)) {
+                        counter.textContent = currentTurn + 1;
+                    } else {
+                         counter.textContent = 1; // Reset if it's not a number
+                    }
+                }
+                
+                saveStateToCookie();
             }
         });
 
-        addButton.addEventListener('click', () => createCharacter('', 10)); // createCharacter already calls saveStateToCookie()
+        addButton.addEventListener('click', () => createCharacter('', 10));
 
         removeButton.addEventListener('click', async () => {
             const selectedItems = document.querySelectorAll('.highlighted');
             for (const item of selectedItems) {
-                // If it has an IndexedDB image ID, check if other elements still use it
                 if (item.dataset.indexedDbImageId) {
                     const currentImageId = item.dataset.indexedDbImageId;
                     const otherElementsUsingId = Array.from(document.querySelectorAll('.draggable[data-indexed-db-image-id]')).filter(
                         el => el !== item && el.dataset.indexedDbImageId === currentImageId
                     );
-
                     if (otherElementsUsingId.length === 0) {
-                        // Only delete from IndexedDB if no other elements are using this image ID
                         try {
                             await deleteImageFromIndexedDB(currentImageId);
                             console.log(`Deleted image ${currentImageId} from IndexedDB.`);
@@ -959,8 +941,6 @@
                         console.log(`Image ${currentImageId} not deleted from IndexedDB, still referenced by other elements.`);
                     }
                 }
-                
-                // Always revoke the Object URL if it exists, as it's specific to this DOM element
                 if (item.dataset.objectUrl) {
                     URL.revokeObjectURL(item.dataset.objectUrl);
                     console.log(`Revoked Object URL: ${item.dataset.objectUrl}`);
@@ -968,14 +948,14 @@
                 item.remove();
             }
             updateActionButtonsState();
-            saveStateToCookie(); // Save state after removal
+            saveStateToCookie(); 
         });
 
         copyButton.addEventListener('click', () => {
             const originals = document.querySelectorAll('.highlighted');
             if (originals.length > 0) {
                 let allNames = new Set(Array.from(document.querySelectorAll('#shelf-items .font-bold.text-lg')).map(span => span.textContent.trim()));
-                let lastOriginal = originals[originals.length - 1]; // Find the last selected item to insert after
+                let lastOriginal = originals[originals.length - 1];
 
                 originals.forEach(original => {
                     const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
@@ -998,7 +978,6 @@
                         newName = nextName;
                         allNames.add(newName);
 
-                        // Find the true last item in the sequence for insertion
                         const baseName = (originalName.match(/(.+) (\d+)$/) || [null, originalName])[1];
                         const allSiblings = Array.from(document.querySelectorAll('#shelf-items .draggable')).filter(el => {
                              const nameSpan = el.querySelector('.font-bold.text-lg');
@@ -1011,24 +990,14 @@
                     
                     const originalBgImage = original.style.backgroundImage;
                     const originalIndexedDbImageId = original.dataset.indexedDbImageId || '';
-
-                    const options = {
-                        insertionElement: insertionPoint,
-                        backgroundColorClass: backgroundColorClass
-                    };
-
-                    // If it's an IndexedDB image, pass the ID reference for creation, otherwise pass the URL
+                    const options = { insertionElement: insertionPoint, backgroundColorClass: backgroundColorClass };
                     if (originalIndexedDbImageId) {
-                        options.backgroundImage = `indexeddb://${originalIndexedDbImageId}`; // Reference existing IndexedDB image
+                        options.backgroundImage = `indexeddb://${originalIndexedDbImageId}`;
                     } else if (originalBgImage && originalBgImage.startsWith('url(')) {
-                        options.backgroundImage = originalBgImage.substring(4, originalBgImage.length - 1).replace(/['"]/g, ''); // Extract URL
+                        options.backgroundImage = originalBgImage.substring(4, originalBgImage.length - 1).replace(/['"]/g, '');
                     }
-
-                    const newCharacter = createCharacter(newName, hp, statuses, options); // createCharacter already calls saveStateToCookie()
-                    
-                    // The createCharacter function will handle setting the dataset.indexedDbImageId and objectUrl
-                    // if options.backgroundImage was 'indexeddb://ID'.
-                    lastOriginal = insertionPoint.nextElementSibling; // The new insertion point is the card we just created
+                    createCharacter(newName, hp, statuses, options); 
+                    lastOriginal = insertionPoint.nextElementSibling;
                 });
             }
         });
@@ -1038,41 +1007,27 @@
                  const statusContainer = item.querySelector('.status-container');
                  if(statusContainer) statusContainer.innerHTML = '';
              });
-             saveStateToCookie(); // Save state after clearing statuses
+             saveStateToCookie(); 
         });
 
-        // --- Clear All Data Logic ---
-        clearAllDataButton.addEventListener('click', async () => { // Direct action now
-            // Clear the cookie
-            setCookie('initiativeTrackerState', '', -1); // Set expiration to past
+        clearAllDataButton.addEventListener('click', async () => { 
+            setCookie('initiativeTrackerState', '', -1); 
             if (db) {
                 db.close();
-                db = null; // Clear the reference to the database object
+                db = null; 
                 console.log('IndexedDB connection closed.');
             }
-
-            // Delete the IndexedDB database
             try {
                 await new Promise((resolve, reject) => {
                     const req = indexedDB.deleteDatabase(DB_NAME);
-                    req.onsuccess = () => {
-                        console.log('IndexedDB database deleted successfully');
-                        resolve();
-                    };
-                    req.onblocked = () => {
-                        console.log('IndexDB deletion blocked')
-                    };
-                    req.onerror = (event) => {
-                        console.error('Error deleting IndexedDB database:', event.target.error);
-                        reject(event.target.error);
-                    };
+                    req.onsuccess = () => { console.log('IndexedDB database deleted successfully'); resolve(); };
+                    req.onblocked = () => { console.log('IndexDB deletion blocked') };
+                    req.onerror = (event) => { console.error('Error deleting IndexedDB database:', event.target.error); reject(event.target.error); };
                 });
             } catch (e) {
                 console.error("Failed to delete IndexedDB:", e);
             }
-
-            // Perform a "soft reset" by clearing DOM and re-initializing default scene
-            shelf.innerHTML = ''; // Clear existing elements from the display
+            shelf.innerHTML = ''; 
             initializeApp()
         });
 
@@ -1080,12 +1035,8 @@
         let isSelecting = false;
         let startX, startY;
         shelf.addEventListener('mousedown', (e) => {
-            // Do not start selection if clicking on an already highlighted character or the black bar
-            if (e.target.closest('.draggable.highlighted') || e.target.classList.contains('bg-black')) return; 
-
-            // Allow clicking on existing non-highlighted characters to select them
+            if (e.target.closest('.draggable.highlighted') || e.target.closest('#turn-marker')) return; 
             if (e.target.closest('.draggable')) {
-                // If it's a character, let the regular click event handle selection
                 return;
             }
 
@@ -1107,8 +1058,7 @@
             Object.assign(selectionBox.style, { width: `${width}px`, height: `${height}px`, left: `${left}px`, top: `${top}px` });
             const boxRect = selectionBox.getBoundingClientRect();
             document.querySelectorAll('.draggable').forEach(item => {
-                // Do not include the turn marker in drag selection
-                if (item.classList.contains('bg-black')) return;
+                if (item.id === 'turn-marker') return;
 
                 const itemRect = item.getBoundingClientRect();
                 const isIntersecting = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
@@ -1124,14 +1074,10 @@
             }
         });
         
-        // --- Global Event Listeners to close popups ---
         document.addEventListener('keydown', (event) => {
-            // Disable keyboard shortcuts if context menu is open
             if (!contextMenu.classList.contains('hidden')) {
-                // Allow default behavior for typing into inputs within the context menu
                 return;
             }
-
             if(event.key === 'Escape') {
                 if (!statusModal.classList.contains('hidden')) statusModal.classList.add('hidden');
                 else {
@@ -1141,16 +1087,13 @@
                 return;
             }
 
-            // Prevent shortcuts if an editable field is active
             if (document.activeElement.getAttribute('contenteditable') === 'true' || 
-                document.activeElement === imageUrlInput) { // Also check for image URL input
+                document.activeElement === imageUrlInput) {
                 return;
             }
             
-            // Handle number keys for status modal selection
             if (!statusModal.classList.contains('hidden') && event.code.startsWith('Digit')) {
                  event.preventDefault();
-                 // Digit0 maps to 9th status, Digit1 to 0th, etc.
                  const keyNumber = event.code === 'Digit0' ? 9 : parseInt(event.code.slice(-1)) - 1;
                  const symbolButtons = symbolGrid.querySelectorAll('button');
                  if (symbolButtons[keyNumber]) symbolButtons[keyNumber].click();
@@ -1169,7 +1112,6 @@
         });
         
         window.addEventListener('click', (e) => {
-            // Close context menu if click outside it and not on a draggable item (which has its own context menu handler)
             if (!contextMenu.classList.contains('hidden') && !contextMenu.contains(e.target) && !e.target.closest('.draggable')) {
                 contextMenu.classList.add('hidden');
             }
@@ -1193,7 +1135,7 @@
                 }
             } catch (e) {
                 console.error("Failed to initialize IndexedDB or load state:", e);
-                initializeDefaultScene(); // Fallback to default if IndexedDB fails
+                initializeDefaultScene();
             }
         }
         
