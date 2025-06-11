@@ -499,8 +499,8 @@
             if (item.classList.contains('bg-black')) return;
 
             item.addEventListener('click', (event) => {
-                const isClickOnIcon = event.target.tagName === 'SPAN' && event.target.parentElement.classList.contains('status-container');
-                if (event.target.getAttribute('contenteditable') === 'true' || isClickOnIcon) return;
+                // Modified: removed condition `isClickOnIcon` to prevent status icons from being tap targets for dismissal
+                if (event.target.getAttribute('contenteditable') === 'true') return;
                 
                 if (event.shiftKey) {
                     item.classList.toggle('highlighted');
@@ -701,12 +701,9 @@
             const statusContainer = newItem.querySelector('.status-container');
             statuses.forEach(symbol => {
                  const statusIcon = document.createElement('span');
-                 statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer text-readable";
+                 statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable"; // Changed cursor to default
+                 // Removed click listener for statusIcon dismissal
                  statusIcon.textContent = symbol;
-                 statusIcon.addEventListener('click', () => {
-                     statusIcon.remove();
-                     saveStateToCookie(); // Save state when a status is removed directly
-                 });
                  statusContainer.appendChild(statusIcon);
             });
             
@@ -763,12 +760,9 @@
                         selectedItems.forEach(item => {
                             if (!Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent).includes(symbol)) {
                                 const statusIcon = document.createElement('span');
-                                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-pointer text-readable";
+                                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable"; // Changed cursor to default
+                                // Removed click listener for statusIcon dismissal
                                 statusIcon.textContent = symbol;
-                                statusIcon.addEventListener('click', () => {
-                                    statusIcon.remove();
-                                    saveStateToCookie(); // Save state when a status is removed directly
-                                });
                                 item.querySelector('.status-container').appendChild(statusIcon);
                             }
                         });
@@ -1075,9 +1069,14 @@
         
         // --- Global Event Listeners to close popups ---
         document.addEventListener('keydown', (event) => {
+            // Disable keyboard shortcuts if context menu is open
+            if (!contextMenu.classList.contains('hidden')) {
+                // Allow default behavior for typing into inputs within the context menu
+                return;
+            }
+
             if(event.key === 'Escape') {
                 if (!statusModal.classList.contains('hidden')) statusModal.classList.add('hidden');
-                else if (!contextMenu.classList.contains('hidden')) contextMenu.classList.add('hidden');
                 else {
                     document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
                     updateActionButtonsState();
