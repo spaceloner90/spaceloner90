@@ -357,17 +357,17 @@
                     let bgImage = item.style.backgroundImage;
                     let indexedDbImageId = item.dataset.indexedDbImageId || ''; // Get the stored IndexedDB ID if it exists
 
-                    // Only save image URLs, not data:image URLs, and prioritize IndexedDB ID
+                    // Prioritize IndexedDB ID for saving
                     if (indexedDbImageId) {
                         bgImage = `indexeddb://${indexedDbImageId}`; // Store a reference to IndexedDB
                     } else if (bgImage && bgImage.startsWith('url("data:image/')) {
-                        bgImage = ''; // Clear data:image URLs
+                        // If it's a data URL, clear it, as we decided not to persist them
+                        bgImage = '';
                     } else if (bgImage) {
-                         // Extract the URL from url("...")
+                         // Extract the raw URL from url("...")
                         const urlMatch = bgImage.match(/^url\(['"]?(.*?)['"]?\)$/);
                         bgImage = urlMatch ? urlMatch[1] : '';
                     }
-
 
                     state.push({
                         type: 'character',
@@ -644,7 +644,7 @@
             const { 
                 insertionElement = null, 
                 backgroundColorClass = null, 
-                backgroundImage = '' 
+                backgroundImage = '' // Can be a direct URL or 'indexeddb://ID'
             } = options;
 
             const newItem = document.createElement('div');
@@ -653,8 +653,30 @@
             const newColor = backgroundColorClass || colorPalette[colorIndex++ % colorPalette.length];
             newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
             
-            if (backgroundImage) {
+            // NEW LOGIC FOR BACKGROUND IMAGE HANDLING
+            if (backgroundImage.startsWith('indexeddb://')) {
+                const imageId = backgroundImage.substring('indexeddb://'.length);
+                newItem.dataset.indexedDbImageId = imageId; // Store the ID on the new item
+                // When character is created from a copy, we need to load the blob
+                loadImageFromIndexedDB(imageId).then(blob => {
+                    if (blob) {
+                        const objectUrl = URL.createObjectURL(blob);
+                        newItem.style.backgroundImage = `url('${objectUrl}')`;
+                        newItem.dataset.objectUrl = objectUrl; // Store object URL for revoking later
+                    } else {
+                        console.warn(`Copied image with ID ${imageId} not found in IndexedDB.`);
+                    }
+                }).catch(e => {
+                    console.error(`Error loading copied IndexedDB image for ID ${imageId}:`, e);
+                });
+            } else if (backgroundImage) { // Handles external URLs
                 newItem.style.backgroundImage = `url('${backgroundImage}')`;
+                // Ensure no leftover IndexedDB ID if an external URL is explicitly set
+                delete newItem.dataset.indexedDbImageId;
+                if (newItem.dataset.objectUrl) {
+                    URL.revokeObjectURL(newItem.dataset.objectUrl);
+                    delete newItem.dataset.objectUrl;
+                }
             }
             
             const nameContent = name || '';
@@ -870,15 +892,27 @@
         removeButton.addEventListener('click', async () => {
             const selectedItems = document.querySelectorAll('.highlighted');
             for (const item of selectedItems) {
-                // Clean up IndexedDB image and revoke Object URL if applicable
+                // If it has an IndexedDB image ID, check if other elements still use it
                 if (item.dataset.indexedDbImageId) {
-                    try {
-                        await deleteImageFromIndexedDB(item.dataset.indexedDbImageId);
-                        console.log(`Deleted image ${item.dataset.indexedDbImageId} from IndexedDB.`);
-                    } catch (e) {
-                        console.error(`Error deleting image ${item.dataset.indexedDbImageId} from IndexedDB:`, e);
+                    const currentImageId = item.dataset.indexedDbImageId;
+                    const otherElementsUsingId = Array.from(document.querySelectorAll('.draggable[data-indexed-db-image-id]')).filter(
+                        el => el !== item && el.dataset.indexedDbImageId === currentImageId
+                    );
+
+                    if (otherElementsUsingId.length === 0) {
+                        // Only delete from IndexedDB if no other elements are using this image ID
+                        try {
+                            await deleteImageFromIndexedDB(currentImageId);
+                            console.log(`Deleted image ${currentImageId} from IndexedDB.`);
+                        } catch (e) {
+                            console.error(`Error deleting image ${currentImageId} from IndexedDB:`, e);
+                        }
+                    } else {
+                        console.log(`Image ${currentImageId} not deleted from IndexedDB, still referenced by other elements.`);
                     }
                 }
+                
+                // Always revoke the Object URL if it exists, as it's specific to this DOM element
                 if (item.dataset.objectUrl) {
                     URL.revokeObjectURL(item.dataset.objectUrl);
                     console.log(`Revoked Object URL: ${item.dataset.objectUrl}`);
@@ -927,9 +961,6 @@
                         }
                     }
                     
-                    // For copied characters, if the original had an IndexedDB image,
-                    // we'll copy the reference (ID) but won't duplicate the blob in IndexedDB.
-                    // A new object URL will be created when the character is recreated.
                     const originalBgImage = original.style.backgroundImage;
                     const originalIndexedDbImageId = original.dataset.indexedDbImageId || '';
 
@@ -947,11 +978,8 @@
 
                     const newCharacter = createCharacter(newName, hp, statuses, options); // createCharacter already calls saveStateToCookie()
                     
-                    // If the original had an IndexedDB image, set the dataset for the new character too
-                    if (originalIndexedDbImageId) {
-                        newCharacter.dataset.indexedDbImageId = originalIndexedDbImageId;
-                        // The createCharacter will set the objectUrl upon creation based on the ID
-                    }
+                    // The createCharacter function will handle setting the dataset.indexedDbImageId and objectUrl
+                    // if options.backgroundImage was 'indexeddb://ID'.
                     lastOriginal = insertionPoint.nextElementSibling; // The new insertion point is the card we just created
                 });
             }
