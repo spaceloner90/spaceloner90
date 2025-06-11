@@ -283,7 +283,7 @@
         // --- IndexedDB Setup (Still used for images) ---
         let db;
         const DB_NAME = 'initiativeTrackerDB';
-        const DB_VERSION = 1;
+        const DB_VERSION = 2; 
         const IMAGE_STORE_NAME = 'images';
 
         function openIndexedDB() {
@@ -292,9 +292,10 @@
 
                 request.onupgradeneeded = (event) => {
                     db = event.target.result;
-                    if (!db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
-                        db.createObjectStore(IMAGE_STORE_NAME, { keyPath: 'id' });
+                    if (db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
+                        db.deleteObjectStore(IMAGE_STORE_NAME);
                     }
+                    db.createObjectStore(IMAGE_STORE_NAME, { keyPath: 'id' });
                 };
 
                 request.onsuccess = (event) => {
@@ -318,7 +319,10 @@
                 const request = store.put({ id: id, blob: blob });
 
                 request.onsuccess = () => resolve();
-                request.onerror = (event) => reject(event.target.errorCode);
+                request.onerror = (event) => {
+                    console.error("Failed to put image in IndexedDB:", event.target.error);
+                    reject(event.target.error);
+                };
             });
         }
 
@@ -413,7 +417,6 @@
             }
         }
         
-        // --- MODIFIED: Asynchronous Loading Function ---
         async function loadState() {
             const orderJSON = localStorage.getItem('initiativeOrder');
             if (!orderJSON) return false;
@@ -421,6 +424,7 @@
             try {
                 const order = JSON.parse(orderJSON);
                 shelf.innerHTML = ''; 
+                colorIndex = 0; // Reset color index on load
 
                 const itemPromises = order.map(async (id) => {
                     const itemJSON = localStorage.getItem(id);
@@ -789,7 +793,6 @@
             const url = imageUrlInput.value.trim();
             if (url) {
                 document.querySelectorAll('.highlighted').forEach(item => {
-                    item.classList.remove(...colorPalette);
                     item.style.backgroundImage = `url('${url}')`;
                     item.dataset.bgImageKey = url;
                 });
@@ -806,7 +809,6 @@
                 await saveImageToIndexedDB(imageId, file);
                 const objectUrl = URL.createObjectURL(file);
                 document.querySelectorAll('.highlighted').forEach(item => {
-                    item.classList.remove(...colorPalette);
                     item.style.backgroundImage = `url('${objectUrl}')`;
                     item.dataset.bgImageKey = imageId;
                 });
@@ -864,7 +866,6 @@
                 const hp = original.querySelector('.text-2xl.font-mono').textContent.trim();
                 const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
                 const notes = original.dataset.notes || '';
-                const backgroundColorClass = Array.from(original.classList).find(cls => colorPalette.includes(cls));
                 const bgImageKey = original.dataset.bgImageKey || '';
                 const bgStyle = original.style.backgroundImage;
                 
@@ -874,9 +875,10 @@
                     newName = match ? `${match[1]} ${parseInt(match[2], 10) + 1}` : `${name} 2`;
                 }
                 
+                // --- FIX: Do not pass the original's color to the copy ---
                 const options = { 
                     insertionElement: lastOriginal, 
-                    backgroundColorClass: backgroundColorClass,
+                    // backgroundColorClass is intentionally omitted to get the next default color
                     backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/['"]/g, '') : '',
                     bgImageKey: bgImageKey
                 };
@@ -987,14 +989,16 @@
 
         function initializeDefaultScene() {
             localStorage.clear();
+            colorIndex = 0; // Ensure colors start from the beginning
             const goblinImageUrl = 'https://www.dndbeyond.com/avatars/thumbnails/30783/955/1000/1000/638062024584880857.png';
             const goblinNotes = `<p><strong>Goblin</strong><br><em>Small Humanoid (Goblinoid), Neutral Evil</em></p><hr><p><strong>Armor Class</strong> 15 (leather armor, shield)<br><strong>Hit Points</strong> 7 (2d6)<br><strong>Speed</strong> 30 ft.</p><hr><p><strong>STR</strong> 8 (-1) | <strong>DEX</strong> 14 (+2) | <strong>CON</strong> 10 (+0) | <strong>INT</strong> 10 (+0) | <strong>WIS</strong> 8 (-1) | <strong>CHA</strong> 8 (-1)</p><hr><p><strong>Skills</strong> Stealth +6<br><strong>Senses</strong> Darkvision 60 ft., Passive Perception 9<br><strong>Languages</strong> Common, Goblin<br><strong>Challenge</strong> 1/4 (50 XP) | <strong>Proficiency Bonus</strong> +2</p><hr><p><strong><em>Nimble Escape.</em></strong> The goblin can take the Disengage or Hide action as a bonus action on each of its turns.</p><p><strong>Actions</strong><br><strong><em>Scimitar.</em></strong> <em>Melee Weapon Attack:</em> +4 to hit, reach 5 ft., one target. <em>Hit:</em> 5 (1d6 + 2) slashing damage.<br><strong><em>Shortbow.</em></strong> <em>Ranged Weapon Attack:</em> +4 to hit, range 80/320 ft., one target. <em>Hit:</em> 5 (1d6 + 2) piercing damage.</p>`;
 
             createTurnMarker();
-            const options = { bgImageKey: goblinImageUrl, backgroundImage: goblinImageUrl, backgroundColorClass: '' };
-            createCharacter('Goblin 1', 7, [], goblinNotes, options);
-            createCharacter('Goblin 2', 7, [], goblinNotes, options);
-            createCharacter('Goblin 3', 4, ['❤️‍🩹'], goblinNotes, options);
+            // --- FIX: Goblins get default colors instead of a hardcoded one ---
+            const goblinOptions = { bgImageKey: goblinImageUrl, backgroundImage: goblinImageUrl };
+            createCharacter('Goblin 1', 7, [], goblinNotes, goblinOptions);
+            createCharacter('Goblin 2', 7, [], goblinNotes, goblinOptions);
+            createCharacter('Goblin 3', 4, ['❤️‍🩹'], goblinNotes, goblinOptions);
             createCharacter('Hector the Well-Endowed', 18, ['⚡️'], '', {});
             saveState(); // Perform initial save
         }
