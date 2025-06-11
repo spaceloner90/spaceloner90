@@ -1379,6 +1379,16 @@
                 refreshCompendiumLayout();
                 return;
             }
+
+            // Check for the status modal's shortcuts BEFORE checking for other active inputs.
+            if (isStatusModalOpen) {
+                if (event.code.startsWith('Digit')) {
+                    event.preventDefault();
+                    const keyNumber = event.code === 'Digit0' ? 9 : parseInt(event.code.slice(-1)) - 1;
+                    if (symbolGrid.children[keyNumber]) symbolGrid.children[keyNumber].click();
+                }
+                return; // Stop processing other keys if the status modal is open
+            }
             
             if (isNotesModalOpen && event.code === 'KeyN' && document.activeElement !== notesContentEditable) {
                 event.preventDefault();
