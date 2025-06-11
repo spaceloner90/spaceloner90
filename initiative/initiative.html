@@ -190,6 +190,12 @@
                     Clear Statuses (X)
                 </button>
             </div>
+            <!-- New row for clear all data button -->
+            <div class="mt-4">
+                <button id="clear-all-data-btn" class="bg-red-800 text-white font-bold py-2 px-5 rounded-lg shadow-md hover:bg-red-900 focus:outline-none focus:ring-4 focus:ring-red-300 transition-all duration-200">
+                    Clear All Data
+                </button>
+            </div>
         </div>
     </div>
 
@@ -227,6 +233,7 @@
         const imageUrlInput = document.getElementById('image-url-input');
         const applyUrlButton = document.getElementById('apply-url-btn');
         const imageFileInput = document.getElementById('image-file-input');
+        const clearAllDataButton = document.getElementById('clear-all-data-btn'); // New button reference
 
         // --- Data ---
         const colorPalette = [
@@ -416,7 +423,8 @@
                             
                             const characterOptions = {
                                 backgroundColorClass: itemData.bgColor, 
-                                backgroundImage: actualBackgroundImage 
+                                // Pass the raw ID if it's an IndexedDB image, otherwise the URL
+                                backgroundImage: itemData.bgImage.startsWith('indexeddb://') ? itemData.bgImage : actualBackgroundImage 
                             };
                             const characterElement = createCharacter(
                                 itemData.name, 
@@ -424,10 +432,8 @@
                                 itemData.statuses, 
                                 characterOptions
                             );
-                            if (indexedDbImageId) {
-                                characterElement.dataset.indexedDbImageId = indexedDbImageId;
-                                characterElement.dataset.objectUrl = actualBackgroundImage; // Store object URL for revoking
-                            }
+                            // If it was an IndexedDB image, the createCharacter function already set the dataset.indexedDbImageId
+                            // and objectUrl internally based on the 'indexeddb://ID' format.
                         }
                     }
                     console.log('State loaded from cookie.');
@@ -969,7 +975,7 @@
                         backgroundColorClass: backgroundColorClass
                     };
 
-                    // If it's an IndexedDB image, pass the ID for creation, otherwise pass the URL
+                    // If it's an IndexedDB image, pass the ID reference for creation, otherwise pass the URL
                     if (originalIndexedDbImageId) {
                         options.backgroundImage = `indexeddb://${originalIndexedDbImageId}`; // Reference existing IndexedDB image
                     } else if (originalBgImage && originalBgImage.startsWith('url(')) {
@@ -992,6 +998,33 @@
              });
              saveStateToCookie(); // Save state after clearing statuses
         });
+
+        // --- Clear All Data Logic ---
+        clearAllDataButton.addEventListener('click', async () => {
+            // Clear the cookie
+            setCookie('initiativeTrackerState', '', -1); // Set expiration to past
+
+            // Delete the IndexedDB database
+            try {
+                await new Promise((resolve, reject) => {
+                    const req = indexedDB.deleteDatabase(DB_NAME);
+                    req.onsuccess = () => {
+                        console.log('IndexedDB database deleted successfully');
+                        resolve();
+                    };
+                    req.onerror = (event) => {
+                        console.error('Error deleting IndexedDB database:', event.target.error);
+                        reject(event.target.error);
+                    };
+                });
+            } catch (e) {
+                console.error("Failed to delete IndexedDB:", e);
+            }
+
+            // Reload the page to reflect the cleared state
+            location.reload();
+        });
+
 
         let isSelecting = false;
         let startX, startY;
