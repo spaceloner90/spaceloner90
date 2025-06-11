@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Grid of Elements</title>
+    <title>Initiatve Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap">
     <style>
@@ -41,7 +41,7 @@
         .draggable {
             cursor: grab;
             transition: transform 0.3s ease, box-shadow 0.3s ease;
-            position: relative; 
+            position: relative;
             background-size: cover;
             background-position: center;
         }
@@ -87,7 +87,7 @@
             transform: scale(1.05) translateY(-8px); /* Slightly larger and more lifted */
             animation: pulse-border 1.5s infinite; /* Apply the new animation */
         }
-        
+
         /* New style for highlighting selected statuses in the modal */
         .symbol-selected {
             background-color: #dbeafe; /* A light blue background */
@@ -113,12 +113,12 @@
             padding: 8px;
             width: 200px;
         }
-        
+
         /* Add a text shadow for readability over any background */
         .text-readable {
             text-shadow: 0 1px 3px rgba(0,0,0,0.6);
         }
-        
+
         /* Styles for the Notes Modal's rich text editor */
         #notes-content-editable:focus {
             outline: 2px solid #3b82f6; /* Blue outline on focus */
@@ -182,13 +182,13 @@
             display: flex;
             flex-direction: column;
         }
-        
+
         #compendium-shelf-inner-wrapper {
             flex-grow: 1;
             position: relative;
             overflow-y: auto;
         }
-        
+
         #compendium-shelf-inner {
             position: relative;
             width: 100%;
@@ -206,7 +206,7 @@
 
     <!-- This div is for the drag-to-select feature -->
     <div id="selection-box" style="display: none;"></div>
-    
+
     <!-- Custom context menu for changing colors and images -->
     <div id="context-menu" class="hidden">
         <div class="space-y-2">
@@ -239,7 +239,7 @@
 
             <!-- Container for the elements, now a wrapping flex container -->
             <div id="shelf-items" class="flex flex-wrap justify-center items-start gap-4 min-h-80 p-4 bg-white rounded-lg shadow-inner">
-                
+
                 <!-- The Black Bar / Turn Marker is loaded dynamically -->
 
                 <!-- Elements will be populated by JavaScript -->
@@ -288,7 +288,7 @@
             </div>
         </div>
     </div>
-    
+
     <!-- NEW: Compendium Shelf HTML -->
     <div id="compendium-container">
         <div id="compendium-handle">
@@ -299,7 +299,9 @@
              <div id="compendium-shelf-inner-wrapper">
                 <div id="compendium-shelf-inner"></div>
              </div>
-             <div class="p-2 border-t border-gray-300">
+             <div class="p-2 border-t border-gray-300 flex space-x-2"> <!-- Added flex and space-x-2 for layout -->
+                <button id="dnd5e-import-btn" class="w-full bg-blue-700 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-600">DND 5e</button>
+                <!-- Removed the hidden file input here -->
                 <button id="manage-compendium-data-btn" class="w-full bg-gray-500 text-white font-bold py-2 px-4 rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400">Manage Data</button>
              </div>
         </div>
@@ -318,7 +320,7 @@
             </div>
         </div>
     </div>
-    
+
     <!-- Notes Modal -->
     <div id="notes-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-lg shadow-2xl p-6 w-full max-w-2xl h-full max-h-[80vh] flex flex-col">
@@ -380,23 +382,25 @@
         const compendiumDataModal = document.getElementById('compendium-data-modal');
         const closeCompendiumDataModalBtn = document.getElementById('close-compendium-data-modal-btn');
         const compendiumDataTextarea = document.getElementById('compendium-data-textarea');
+        // NEW: Get references to the DND 5e button
+        const dnd5eImportBtn = document.getElementById('dnd5e-import-btn');
 
 
         // --- Data ---
         const colorPalette = [
-            'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500', 'bg-lime-500', 'bg-green-500', 
+            'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500', 'bg-lime-500', 'bg-green-500',
             'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500', 'bg-sky-500', 'bg-blue-500', 'bg-indigo-500',
             'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500', 'bg-rose-500', 'bg-slate-500'
         ];
         let colorIndex = 0; // To cycle through colors for new characters
         let isHpHidden = false; // To track HP visibility state
-        
+
         const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
 
         // --- IndexedDB Setup (Still used for images) ---
         let db;
         const DB_NAME = 'initiativeTrackerDB';
-        const DB_VERSION = 2; 
+        const DB_VERSION = 2;
         const IMAGE_STORE_NAME = 'images';
 
         function openIndexedDB() {
@@ -496,7 +500,7 @@
                         const totalHpSpan = item.querySelector('.total-hp');
                         const statusContainer = item.querySelector('.status-container');
                         const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
-                        
+
                         itemData = {
                             type: 'character',
                             name: nameSpan ? nameSpan.textContent.trim() : '',
@@ -520,14 +524,14 @@
                 });
 
                 localStorage.setItem('isHpHidden', JSON.stringify(isHpHidden));
-                
+
                 // Cleanup orphaned items
                 const allIds = new Set([...initiativeOrder, ...compendiumOrder]);
                  for (let i = 0; i < localStorage.length; i++) {
                     const key = localStorage.key(i);
                     if ((key.startsWith('char-') || key.startsWith('turn-marker-')) && !allIds.has(key)) {
                         localStorage.removeItem(key);
-                        i--; 
+                        i--;
                     }
                 }
                 console.log('State saved to localStorage.');
@@ -535,7 +539,7 @@
                 console.error("Failed to save state to localStorage:", e);
             }
         }
-        
+
         async function loadItemsToShelf(orderKey, targetParent) {
             const orderJSON = localStorage.getItem(orderKey);
             if (!orderJSON) return;
@@ -544,9 +548,9 @@
             const itemPromises = order.map(async (id) => {
                 const itemJSON = localStorage.getItem(id);
                 if (!itemJSON) return null;
-                
+
                 const itemData = JSON.parse(itemJSON);
-                
+
                 let bgImageUrl = '';
                 if (itemData.bgImageKey && itemData.bgImageKey.startsWith('indexeddb://')) {
                     const blob = await loadImageFromIndexedDB(itemData.bgImageKey).catch(e => console.error(e));
@@ -607,7 +611,7 @@
         function updateActionButtonsState() {
             const selectedItems = document.querySelectorAll('.highlighted');
             const buttonsToUpdate = [removeButton, copyButton, addStatusButton, clearStatusesButton, notesButton];
-            
+
             if (selectedItems.length > 0) {
                 buttonsToUpdate.forEach(button => {
                     button.disabled = false;
@@ -644,7 +648,7 @@
                         refreshCompendiumLayout();
                     }
                 }
-                
+
                 item.dataset.originalParentId = item.parentElement.id;
                 item.dataset.originalNextSiblingId = item.nextSibling ? item.nextSibling.id : 'null';
                 setTimeout(() => item.classList.add('dragging'), 0);
@@ -654,7 +658,7 @@
                 item.classList.remove('dragging');
                 const newParent = item.parentElement;
                 const originalParentId = item.dataset.originalParentId;
-                
+
                 if (newParent.id === 'shelf-items' && originalParentId === 'compendium-shelf-inner') {
                     item.style.position = '';
                     item.style.top = '';
@@ -664,7 +668,7 @@
                 }
 
                 if (newParent && originalParentId && newParent.id !== originalParentId && !item.id.startsWith('turn-marker')) {
-                    
+
                     const originalItemData = {
                         name: item.querySelector('.font-bold.text-lg').textContent.trim(),
                         hp: item.querySelector('.current-hp').textContent.trim(),
@@ -702,7 +706,7 @@
                 delete item.dataset.originalNextSiblingId;
 
                 refreshCompendiumLayout();
-                saveState(); 
+                saveState();
             });
         }
 
@@ -710,7 +714,7 @@
              if (!item.classList.contains('character-card')) return;
             item.addEventListener('click', (event) => {
                 if (event.target.getAttribute('contenteditable') === 'true' || event.target.closest('.notes-indicator')) return;
-                
+
                 const inCompendium = item.parentElement.id === 'compendium-shelf-inner';
 
                 if (event.shiftKey && !inCompendium) { // Allow shift-select only on main shelf
@@ -728,7 +732,7 @@
                         item.classList.add('highlighted');
                     }
                 }
-                
+
                 if (inCompendium) {
                     refreshCompendiumLayout();
                 }
@@ -748,12 +752,12 @@
                 } catch (e) { newHp = parseInt(expression, 10) || 0; }
                 hpSpan.textContent = Math.round(newHp);
                 updateCharacterHpDisplay(parentCard);
-                saveState(); 
+                saveState();
             };
-            
+
             hpSpan.addEventListener('blur', resolveHp);
             hpSpan.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') { e.preventDefault(); resolveHp(); hpSpan.blur(); } 
+                if (e.key === 'Enter') { e.preventDefault(); resolveHp(); hpSpan.blur(); }
                 else if (e.key === 'Escape') {
                     hpSpan.textContent = hpSpan.dataset.originalHp;
                     updateCharacterHpDisplay(parentCard);
@@ -767,7 +771,7 @@
                 nameSpan.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }});
             }
         }
-        
+
         function initializeContextMenu(item) {
             item.addEventListener('contextmenu', e => {
                 e.preventDefault();
@@ -778,7 +782,7 @@
                     item.classList.add('highlighted');
                     updateActionButtonsState();
                 }
-                
+
                 if (item.parentElement.id === 'compendium-shelf-inner') {
                     refreshCompendiumLayout();
                 }
@@ -788,12 +792,12 @@
                 contextMenu.classList.remove('hidden');
             });
         }
-        
+
         shelf.addEventListener('dragover', e => {
             e.preventDefault();
             const draggingItem = document.querySelector('.dragging');
             if (!draggingItem) return;
-            draggingItem.style.position = ''; 
+            draggingItem.style.position = '';
             const afterElement = getDragAfterElement(shelf, e.clientX, e.clientY);
             if (afterElement == null) {
                 shelf.appendChild(draggingItem);
@@ -904,7 +908,7 @@
                 highlightedItem = visibleItems[0];
                 highlightedItem.classList.add('highlighted');
             }
-            
+
             const cardHeight = 224;
             const overlap = cardHeight * 0.85;
             const step = cardHeight - overlap;
@@ -941,17 +945,17 @@
                 items[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
                 return;
             }
-            
+
             const currentIndex = items.indexOf(currentHighlighted);
             currentHighlighted.classList.remove('highlighted');
-            
+
             let nextIndex;
             if (direction === 'down') {
                 nextIndex = (currentIndex + 1) % items.length;
             } else { // 'up'
                 nextIndex = (currentIndex - 1 + items.length) % items.length;
             }
-            
+
             const newItem = items[nextIndex];
             newItem.classList.add('highlighted');
             updateActionButtonsState();
@@ -961,8 +965,8 @@
 
 
         function createCharacter(name, hp, totalHp, statuses = [], notes = '', options = {}) {
-            const { 
-                id = null, insertionElement = null, backgroundColorClass = null, 
+            const {
+                id = null, insertionElement = null, backgroundColorClass = null,
                 backgroundImage = '', bgImageKey = '', parent = shelf,
                 insertBeforeSibling = null
             } = options;
@@ -974,10 +978,10 @@
             const newColor = backgroundColorClass || colorPalette[colorIndex++ % colorPalette.length];
             newItem.classList.add(...newColor.split(' '));
             newItem.classList.add('rounded-md', 'w-32', 'min-h-56', 'shadow-lg', 'flex', 'flex-col', 'justify-between', 'p-2', 'text-white');
-            
+
             newItem.dataset.notes = notes;
             newItem.dataset.bgImageKey = bgImageKey;
-            
+
             if (backgroundImage) newItem.style.backgroundImage = `url('${backgroundImage}')`;
 
             const nameContent = name || '';
@@ -1011,7 +1015,7 @@
                  statusIcon.textContent = symbol;
                  statusContainer.appendChild(statusIcon);
             });
-            
+
             updateNotesIndicator(newItem);
             initializeHpField(newItem.querySelector('.current-hp'));
             initializeHpField(newItem.querySelector('.total-hp'));
@@ -1019,7 +1023,7 @@
             initializeDraggable(newItem);
             initializeSelectable(newItem);
             initializeContextMenu(newItem);
-            
+
             if (parent.id === 'compendium-shelf-inner') {
                 newItem.style.position = 'absolute';
             }
@@ -1041,9 +1045,9 @@
                 newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
                 saveState();
             }
-            return newItem; 
+            return newItem;
         }
-        
+
         function createTurnMarker(id = null, turn = '1') {
             const turnMarker = document.createElement('div');
             turnMarker.id = id || `turn-marker-${crypto.randomUUID()}`;
@@ -1056,9 +1060,9 @@
                     <span class="turn-counter text-2xl font-mono" contenteditable="true">${turn}</span>
                 </div>
             `;
-            
+
             initializeDraggable(turnMarker);
-            
+
             const turnCounterSpan = turnMarker.querySelector('.turn-counter');
             turnCounterSpan.addEventListener('blur', saveState);
             turnCounterSpan.addEventListener('keydown', (e) => {
@@ -1075,12 +1079,12 @@
             statusSymbols.forEach((symbol) => {
                 const symbolButton = document.createElement('button');
                 symbolButton.className = "relative text-3xl p-4 rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500";
-                
+
                 const allHaveStatus = Array.from(selectedItems).every(item => Array.from(item.querySelectorAll('.status-container span')).some(s => s.textContent === symbol));
                 if (allHaveStatus) symbolButton.classList.add('symbol-selected');
 
                 symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${(statusSymbols.indexOf(symbol) + 1) % 10}</span>`;
-                
+
                 symbolButton.addEventListener('click', () => {
                     selectedItems.forEach(item => {
                         const statusContainer = item.querySelector('.status-container');
@@ -1096,12 +1100,12 @@
                         }
                     });
                     populateSymbolModal(selectedItems);
-                    saveState(); 
+                    saveState();
                 });
                 symbolGrid.appendChild(symbolButton);
             });
         }
-        
+
         function populateColorMenu() {
             colorGrid.innerHTML = '';
             colorPalette.forEach(color => {
@@ -1109,18 +1113,18 @@
                 swatch.className = `w-8 h-8 rounded-full ${color} border-2 border-white/50 hover:scale-110 transition-transform`;
                 swatch.addEventListener('click', () => {
                     document.querySelectorAll('.highlighted').forEach(item => {
-                        item.style.backgroundImage = ''; 
+                        item.style.backgroundImage = '';
                         item.dataset.bgImageKey = '';
                         item.classList.remove(...colorPalette);
                         item.classList.add(color);
                     });
                     contextMenu.classList.add('hidden');
-                    saveState(); 
+                    saveState();
                 });
                 colorGrid.appendChild(swatch);
             });
         }
-        
+
         function handleStatusModalToggle() {
              if (!statusModal.classList.contains('hidden')) {
                 statusModal.classList.add('hidden');
@@ -1132,7 +1136,7 @@
                 }
             }
         }
-        
+
         function updateNotesIndicator(item) {
             const indicator = item.querySelector('.notes-indicator');
             if (indicator) indicator.style.display = item.dataset.notes ? 'block' : 'none';
@@ -1141,12 +1145,12 @@
         function openNotesModal() {
             const selectedItems = document.querySelectorAll('.highlighted');
             if (selectedItems.length === 0) return;
-            
+
             const firstItem = selectedItems[0];
             const name = firstItem.querySelector('.font-bold.text-lg').textContent.trim() || 'Unnamed Character';
             notesTitle.textContent = `Notes for ${name}`;
             if (selectedItems.length > 1) notesTitle.textContent += ` (+${selectedItems.length - 1} others)`;
-            
+
             notesContentEditable.innerHTML = firstItem.dataset.notes || '';
             notesModal.classList.remove('hidden');
         }
@@ -1166,7 +1170,7 @@
         addStatusButton.addEventListener('click', handleStatusModalToggle);
         closeModalButton.addEventListener('click', () => statusModal.classList.add('hidden'));
         statusModal.addEventListener('click', (e) => { if (e.target === statusModal) statusModal.classList.add('hidden'); });
-        
+
         applyUrlButton.addEventListener('click', () => {
             const url = imageUrlInput.value.trim();
             if (url) {
@@ -1193,7 +1197,7 @@
                 saveState();
             }
             contextMenu.classList.add('hidden');
-            e.target.value = null; 
+            e.target.value = null;
         });
 
         manageCompendiumDataBtn.addEventListener('click', () => {
@@ -1233,7 +1237,7 @@
 
                     // Clear existing compendium
                     compendiumShelfInner.innerHTML = '';
-                    
+
                     // Import new data
                     importData.forEach(charData => {
                         createCharacter(
@@ -1250,7 +1254,7 @@
                             }
                         );
                     });
-                    
+
                     refreshCompendiumLayout();
                     saveState();
 
@@ -1263,6 +1267,65 @@
             compendiumDataModal.classList.add('hidden');
         });
 
+        // NEW: Event listener for the DND 5e button to fetch JSON from a relative path
+        dnd5eImportBtn.addEventListener('click', async () => {
+            try {
+                // Fetch the dnd_5e.json file from the same directory
+                const response = await fetch('dnd_5e.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const jsonData = await response.json();
+                importDnd5eData(jsonData);
+            } catch (error) {
+                console.error("Error fetching or parsing DND 5e JSON file:", error);
+                // Provide user feedback, e.g., using a custom modal or temporary message
+                alert("Failed to load DND 5e data. Please ensure 'dnd_5e.json' is in the same directory.");
+            }
+        });
+
+        // NEW: Function to import DND 5e data
+        function importDnd5eData(data) {
+            if (!Array.isArray(data)) {
+                console.error("DND 5e data is not an array. Expected an array of character objects.");
+                // Show a user-friendly error
+                alert("DND 5e data format is incorrect. Expected an array of character objects.");
+                return;
+            }
+
+            // Optional: You could ask the user if they want to clear existing compendium data first.
+            // For now, we'll just add the new characters to the existing compendium.
+
+            data.forEach(charData => {
+                // Ensure default values for missing properties to prevent errors
+                const name = charData.name || 'Unnamed Character';
+                const hp = charData.hp || '10';
+                const totalHp = charData.totalHp || charData.hp || '10'; // Use hp if totalHp is missing
+                const statuses = Array.isArray(charData.statuses) ? charData.statuses : [];
+                const notes = charData.notes || '';
+                const bgColor = charData.bgColor || '';
+                const bgImageKey = charData.bgImageKey || ''; // This would be a URL directly in imported JSON, not an IndexedDB key
+
+                createCharacter(
+                    name,
+                    hp,
+                    totalHp,
+                    statuses,
+                    notes,
+                    {
+                        parent: compendiumShelfInner,
+                        backgroundColorClass: bgColor,
+                        backgroundImage: bgImageKey, // It's a URL if it exists
+                        bgImageKey: bgImageKey
+                    }
+                );
+            });
+
+            refreshCompendiumLayout(); // Re-layout the compendium after adding new characters
+            saveState(); // Save the new compendium state
+            console.log("DND 5e data imported successfully!");
+        }
+
 
         // --- Button & Keyboard Logic ---
         lastTurnButton.addEventListener('click', () => {
@@ -1274,7 +1337,7 @@
                     let currentTurn = parseInt(counter.textContent, 10);
                     if (!isNaN(currentTurn) && currentTurn > 1) counter.textContent = currentTurn - 1;
                 }
-                saveState(); 
+                saveState();
             }
         });
 
@@ -1303,7 +1366,7 @@
                 }
             });
             updateActionButtonsState();
-            saveState(); 
+            saveState();
         });
 
         copyButton.addEventListener('click', () => {
@@ -1313,7 +1376,7 @@
             originals.forEach(original => {
                 const parentShelf = original.closest('#shelf-items, #compendium-shelf-inner');
                 const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
-                
+
                 const nameMatch = originalName.match(/(.+) (\d+)$/);
                 const baseName = nameMatch ? nameMatch[1] : originalName;
 
@@ -1344,7 +1407,7 @@
 
                 const newNumber = highestNumber + 1;
                 const newName = `${baseName} ${newNumber}`;
-                
+
                 const hp = original.querySelector('.current-hp').textContent.trim();
                 const totalHp = original.querySelector('.total-hp').textContent.trim();
                 const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
@@ -1352,7 +1415,7 @@
                 const bgImageKey = original.dataset.bgImageKey || '';
                 const bgStyle = original.style.backgroundImage;
 
-                const options = { 
+                const options = {
                     parent: parentShelf,
                     insertionElement: insertionTarget,
                     backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/["']/g, '') : '',
@@ -1380,17 +1443,17 @@
 
         clearStatusesButton.addEventListener('click', () => {
              document.querySelectorAll('.highlighted .status-container').forEach(c => c.innerHTML = '');
-             saveState(); 
+             saveState();
         });
 
-        clearAllDataButton.addEventListener('click', async () => { 
+        clearAllDataButton.addEventListener('click', async () => {
             localStorage.clear();
             if (db) {
                 const transaction = db.transaction([IMAGE_STORE_NAME], 'readwrite');
                 const store = transaction.objectStore(IMAGE_STORE_NAME);
                 store.clear();
             }
-            shelf.innerHTML = ''; 
+            shelf.innerHTML = '';
             compendiumShelfInner.innerHTML = '';
             await initializeApp();
         });
@@ -1449,7 +1512,7 @@
                 selectionBox.style.display = 'none';
             }
         });
-        
+
         document.addEventListener('keydown', (event) => {
             const isNotesModalOpen = !notesModal.classList.contains('hidden');
             const isStatusModalOpen = !statusModal.classList.contains('hidden');
@@ -1475,13 +1538,13 @@
                 }
                 return; // Stop processing other keys if the status modal is open
             }
-            
+
             if (isNotesModalOpen && event.code === 'KeyN' && document.activeElement !== notesContentEditable) {
                 event.preventDefault();
                 return closeNotesModal();
             }
             if (isNotesModalOpen || isStatusModalOpen || isContextMenuOpen || activeElementIsEditable) return;
-            
+
             if (isMouseOverCompendium) {
                 if (event.code === 'ArrowDown') {
                     event.preventDefault();
@@ -1503,7 +1566,7 @@
                 case 'Delete': event.preventDefault(); if (!removeButton.disabled) removeButton.click(); break;
             }
         });
-        
+
         window.addEventListener('click', (e) => {
             if (!contextMenu.classList.contains('hidden') && !contextMenu.contains(e.target) && !e.target.closest('.draggable')) {
                 contextMenu.classList.add('hidden');
@@ -1522,13 +1585,13 @@
             createCharacter('Goblin 2', 7, 7, [], goblinNotes, goblinOptions);
             createCharacter('Goblin 3', 4, 7, ['❤️‍🩹'], goblinNotes, goblinOptions);
             createCharacter('Hector the Well-Endowed', 18, 18, ['⚡️'], '', {});
-            
+
             // Add a goblin template to the compendium
             createCharacter('Goblin', 7, 7, [], goblinNotes, { ...goblinOptions, parent: compendiumShelfInner });
 
             saveState(); // Perform initial save
         }
-        
+
         async function initializeApp() {
             populateColorMenu();
             await openIndexedDB();
@@ -1543,11 +1606,11 @@
             if (!await loadState()) {
                 initializeDefaultScene();
             }
-            
+
             updateAllCharacterHpDisplay();
             refreshCompendiumLayout();
         }
-        
+
         initializeApp();
 
     </script>
