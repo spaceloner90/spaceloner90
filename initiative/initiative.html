@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Grid of Elements</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -248,7 +248,7 @@
         ];
         let colorIndex = 0; // To cycle through colors for new characters
         
-        const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
+        const statusSymbols = ['☠️', '�', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
 
         // --- IndexedDB Setup ---
         let db;
@@ -1048,27 +1048,14 @@
             setCookie('initiativeTrackerState', '', -1); // Set expiration to past
 
             // Delete the IndexedDB database
-            try {
-                await new Promise((resolve, reject) => {
-                    const req = indexedDB.deleteDatabase(DB_NAME);
-                    req.onsuccess = () => {
-                        console.log('IndexedDB database deleted successfully');
-                        resolve();
-                    };
-                    req.onerror = (event) => {
-                        console.error('Error deleting IndexedDB database:', event.target.error);
-                        reject(event.target.error);
-                    };
-                });
-            } catch (e) {
-                console.error("Failed to delete IndexedDB:", e);
-            }
+            // Removed await Promise wrapper for direct call
+            indexedDB.deleteDatabase(DB_NAME);
+            console.log('IndexedDB deletion initiated (asynchronous).');
 
             // Perform a "soft reset" by clearing DOM and re-initializing default scene
             shelf.innerHTML = ''; // Clear existing elements from the display
             initializeDefaultScene(); // Re-initialize default characters
             updateActionButtonsState(); // Update button states
-
         });
 
 
