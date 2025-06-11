@@ -1,6 +1,8 @@
 import json
 import argparse
 import math
+import re
+from bs4 import BeautifulSoup
 
 def _get_modifier_text(score):
     """Calculates and returns the D&D 5e ability modifier text."""
@@ -9,12 +11,53 @@ def _get_modifier_text(score):
     modifier = math.floor((score - 10) / 2)
     return f"({'+' if modifier >= 0 else ''}{modifier})"
 
+def _calculate_xp_and_pb(cr_str):
+    """Calculates XP and Proficiency Bonus based on Challenge Rating."""
+    cr_to_xp = {
+        "0": 10, "1/8": 25, "1/4": 50, "1/2": 100,
+        "1": 200, "2": 450, "3": 700, "4": 1100, "5": 1800,
+        "6": 2300, "7": 2900, "8": 3900, "9": 5000, "10": 5900,
+        "11": 7200, "12": 8400, "13": 10000, "14": 11500, "15": 13000,
+        "16": 15000, "17": 18000, "18": 20000, "19": 22000, "20": 25000,
+        "21": 33000, "22": 41000, "23": 50000, "24": 62000, "25": 75000,
+        "26": 90000, "27": 105000, "28": 120000, "29": 135000, "30": 155000
+    }
+    
+    # Proficiency Bonus based on CR ranges
+    cr_to_pb = {
+        (0, 4): 2, (5, 8): 3, (9, 12): 4, (13, 16): 5,
+        (17, 20): 6, (21, 24): 7, (25, 28): 8, (29, 30): 9
+    }
+
+    xp = cr_to_xp.get(cr_str, 'N/A')
+    
+    pb = 'N/A'
+    try:
+        if '/' in cr_str:
+            cr_val = float(eval(cr_str)) # Handles fractions like "1/4"
+        else:
+            cr_val = float(cr_str)
+
+        for (min_cr, max_cr), bonus in cr_to_pb.items():
+            if min_cr <= cr_val <= max_cr:
+                pb = bonus
+                break
+        if pb == 'N/A' and cr_val > 30: # For CRs higher than 30, estimate PB
+            pb = math.ceil((cr_val - 10) / 4) + 4 # A common extended rule
+            if pb < 9: pb = 9 # Ensure it doesn't go below known max
+            
+    except (ValueError, TypeError, ZeroDivisionError):
+        pass # PB remains 'N/A' or default
+
+    return xp, pb
+
+
 def _generate_header_html(monster_data):
     """Generates the HTML for the monster header."""
     name = monster_data.get('name', 'Unnamed Monster')
     size = monster_data.get('size', 'Unknown')
     m_type = monster_data.get('type', 'creature')
-    subtype = f" ({monster_data['subtype'].replace('any race', 'any race')})" if monster_data.get('subtype') else ''
+    subtype = f" ({monster_data['subtype'].replace('any race', 'any race').title()})" if monster_data.get('subtype') else ''
     alignment = monster_data.get('alignment', 'unaligned')
 
     return f"""
@@ -22,23 +65,29 @@ def _generate_header_html(monster_data):
     <div class="mon-stat-block__name" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold; font-size: 34px; font-family: MrsEavesSmallCaps, Roboto, Helvetica, sans-serif; color: rgb(130, 32, 0);">
         <span class="mon-stat-block__name-link" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; color: rgb(130, 32, 0); text-decoration: none;">{name}</span>
     </div>
-    <div class="mon-stat-block__meta" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-style: italic; margin-bottom: 15px;">{size} {m_type}{subtype}, {alignment}</div>
+    <div class="mon-stat-block__meta" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-style: italic; margin-bottom: 15px;">{size} {m_type.title()}{subtype}, {alignment}</div>
 </div>
 """
 
 def _generate_attributes_html(monster_data):
     """Generates the HTML for AC, HP, and Speed attributes."""
-    hp_extra = f" ({monster_data.get('hit_dice', 'N/A')} + {monster_data.get('constitution',0) * 2})" if monster_data.get('hit_dice') else '' # Simple approximation if hit_dice is present.
-    # Recalculate HP extra based on CON modifier and hit dice if available
-    if monster_data.get('hit_dice') and monster_data.get('constitution'):
+    hp_extra = ""
+    if monster_data.get('hit_dice') and monster_data.get('constitution') is not None:
         try:
-            num_dice = int(monster_data['hit_dice'].split('d')[0])
+            num_dice_str = monster_data['hit_dice'].split('d')[0]
+            num_dice = int(num_dice_str)
             con_mod = math.floor((int(monster_data['constitution']) - 10) / 2)
-            hp_extra = f" ({monster_data['hit_dice']} + {num_dice * con_mod})"
-        except ValueError:
-            hp_extra = f" ({monster_data['hit_dice']})" # Fallback if parsing hit_dice fails
-    else:
-        hp_extra = ""
+            calculated_hp_bonus = num_dice * con_mod
+            if calculated_hp_bonus > 0:
+                 hp_extra = f" ({monster_data['hit_dice']} + {calculated_hp_bonus})"
+            elif calculated_hp_bonus < 0:
+                 hp_extra = f" ({monster_data['hit_dice']} - {abs(calculated_hp_bonus)})"
+            else: # If bonus is 0, just show hit dice
+                 hp_extra = f" ({monster_data['hit_dice']})"
+        except (ValueError, TypeError):
+            hp_extra = f" ({monster_data.get('hit_dice', 'N/A')})" # Fallback if parsing hit_dice or con fails
+    elif monster_data.get('hit_dice'):
+        hp_extra = f" ({monster_data['hit_dice']})"
 
 
     return f"""
@@ -55,13 +104,16 @@ def _generate_attributes_html(monster_data):
 </div>
 """
 
-def _generate_ability_scores_html(monster_data):
-    """Generates the HTML for the ability scores block."""
+def _generate_ability_scores_html_for_main_block(monster_data):
+    """
+    Generates the HTML for the ability scores block,
+    specifically for the main stat block HTML.
+    """
     abilities_html = ""
     ability_order = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']
 
     for stat in ability_order:
-        score = monster_data.get(stat)
+        score = monster_data.get(stat, 'N/A')
         mod_text = _get_modifier_text(score)
         stat_abbr = stat[:3].upper()
         
@@ -70,15 +122,8 @@ def _generate_ability_scores_html(monster_data):
     <div class="ability-block__heading" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">{stat_abbr}</div>
     <div class="ability-block__data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><span class="ability-block__score" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{score}</span>&nbsp;<span class="ability-block__modifier" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin-left: 2px;">{mod_text}</span></div>
 </div>"""
-    
-    return f"""
-<div class="mon-stat-block__stat-block" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; color: rgb(0, 0, 0); font-family: &quot;Scala Sans Offc&quot;, Roboto, Helvetica, sans-serif; font-size: 15px; font-variant-caps: normal; letter-spacing: normal;">
-    <div class="mon-stat-block__separator" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><img class="mon-stat-block__separator-img" alt="" src="https://www.dndbeyond.com/file-attachments/0/579/stat-block-header-bar.svg" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; border-style: initial; border-color: initial; border-image: initial; min-height: 10px;"></div>
-    <div class="ability-block" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; display: flex; flex-wrap: wrap; margin: 0px; color: rgb(130, 32, 0);">
-        {abilities_html}
-    </div>
-</div>
-"""
+    return abilities_html
+
 
 def _generate_tidbits_html(monster_data):
     """Generates HTML for saving throws, skills, senses, languages, and CR/PB."""
@@ -98,20 +143,24 @@ def _generate_tidbits_html(monster_data):
 
     # Skills
     skills = []
-    for skill_key, value in monster_data.items():
-        # Look for keys like "history": 12, "perception": 10 etc.
-        if isinstance(value, (int, str)) and value != '' and skill_key not in ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma', 'hit_points', 'armor_class', 'challenge_rating']:
-            if '_save' not in skill_key and '_bonus' not in skill_key and '_dice' not in skill_key and 'hit_' not in skill_key:
-                # Attempt to include common skills and values that might be present
-                # This is a bit heuristic, as skill keys aren't consistently named e.g., 'history' vs 'stealth_skill'
-                if any(s in skill_key for s in ['history', 'perception', 'stealth', 'insight', 'persuasion', 'medicine', 'religion', 'athletics', 'acrobatics', 'sleight_of_hand', 'arcana', 'investigation', 'nature', 'performance', 'intimidation', 'survival', 'deception', 'animal_handling']):
-                    skill_name = skill_key.replace('_skill', '').replace('_', ' ').title()
-                    skills.append(f"{skill_name} {value}")
+    # Explicitly check for known skills and their values, preferring numeric values
+    skill_mapping = {
+        'history': 'History', 'perception': 'Perception', 'stealth': 'Stealth',
+        'insight': 'Insight', 'persuasion': 'Persuasion', 'medicine': 'Medicine',
+        'religion': 'Religion', 'athletics': 'Athletics', 'acrobatics': 'Acrobatics',
+        'sleight_of_hand': 'Sleight of Hand', 'arcana': 'Arcana', 'investigation': 'Investigation',
+        'nature': 'Nature', 'performance': 'Performance', 'intimidation': 'Intimidation',
+        'survival': 'Survival', 'deception': 'Deception', 'animal_handling': 'Animal Handling'
+    }
+
+    for key, display_name in skill_mapping.items():
+        if monster_data.get(key) is not None and monster_data[key] != '':
+            skills.append(f"{display_name} {monster_data[key]}")
 
     if skills:
         tidbits_html.append(f"""
 <div class="mon-stat-block__tidbit" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin: 5px 0px; color: rgb(130, 32, 0); line-height: 1.2;">
-    <span class="mon-stat-block__tidbit-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">Skills</span>&nbsp;<span class="mon-stat-block__tidbit-data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{', '.join(skills)}</span>
+    <span class="mon-stat-block__tidbit-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;\">Skills</span>&nbsp;<span class=\"mon-stat-block__tidbit-data\" style=\"box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;\">{', '.join(skills)}</span>
 </div>""")
 
     # Senses
@@ -128,7 +177,7 @@ def _generate_tidbits_html(monster_data):
     <span class="mon-stat-block__tidbit-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">Languages</span>&nbsp;<span class="mon-stat-block__tidbit-data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{monster_data['languages']}</span>
 </div>""")
 
-    # Damage Vulnerabilities, Resistances, Immunities, Condition Immunities
+    # Damage Vulnerabilities, Resistances, Immunities, Condition Immunities (only if they have values)
     if monster_data.get('damage_vulnerabilities'):
         tidbits_html.append(f"""
 <div class="mon-stat-block__tidbit" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin: 5px 0px; color: rgb(130, 32, 0); line-height: 1.2;">
@@ -152,27 +201,17 @@ def _generate_tidbits_html(monster_data):
 
 
     # Challenge Rating and Proficiency Bonus
-    cr = monster_data.get('challenge_rating', 'N/A')
-    # Calculate proficiency bonus based on CR (simple approximation)
-    try:
-        if isinstance(cr, str) and '/' in cr:
-            cr_val = float(eval(cr)) # Handles fractions like "1/4"
-        else:
-            cr_val = float(cr)
-        pb = math.ceil(cr_val / 4) + 1 if cr_val > 0 else 2
-        cr_display = f"{cr} (XP {int(cr_val * 200) if cr_val >= 1 else int(25/float(cr_val)) if cr_val != 0 else 10}; PB +{pb})"
-    except (ValueError, TypeError, ZeroDivisionError):
-        pb = 2 # Default for unparseable CRs or CR 0
-        cr_display = f"{cr} (XP N/A; PB +{pb})"
+    cr_str = str(monster_data.get('challenge_rating', '0'))
+    xp, pb = _calculate_xp_and_pb(cr_str)
     
     tidbits_html.append(f"""
 <div class="mon-stat-block__tidbit-container" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; display: flex;">
     <div class="mon-stat-block__tidbit" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin: 5px 0px; color: rgb(130, 32, 0); line-height: 1.2;">
-        <span class="mon-stat-block__tidbit-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">Challenge</span>&nbsp;<span class="mon-stat-block__tidbit-data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{cr_display}</span>
+        <span class="mon-stat-block__tidbit-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">Challenge</span>&nbsp;<span class="mon-stat-block__tidbit-data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{cr_str} (XP {xp})</span>
     </div>
     <div class="mon-stat-block__tidbit-spacer" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; width: 40px; min-width: 10px;"></div>
     <div class="mon-stat-block__tidbit" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin: 5px 0px; color: rgb(130, 32, 0); line-height: 1.2;">
-        <span class="mon-stat-block__tidbit-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">Proficiency Bonus</span>&nbsp;<span class="mon-stat-block__tidbit-data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">+{pb}</span>
+        <span class="mon-stat-block__tidbit-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;\">Proficiency Bonus</span>&nbsp;<span class=\"mon-stat-block__tidbit-data\" style=\"box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;\">+{pb}</span>
     </div>
 </div>
 """)
@@ -192,35 +231,19 @@ def _generate_description_block_html(heading_text, items):
         # Replace newlines with <br> for HTML display if present
         desc = desc.replace('\\n', '<br>')
 
-        # Attempt to find and format rollable elements from description, mimicking D&D Beyond's span with data attributes
-        # This is a complex step, and this regex might not cover all cases but tries to get common patterns
-        # For simplicity, we are *not* re-implementing the full rollable functionality or tooltips here,
-        # but just keeping the numbers and formatting the text similarly.
-        # Original: <span data-dicenotation="1d20+9" data-rolltype="to hit" data-rollaction="Tentacle" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">+9</span>
-        # We will strip data attributes and hrefs, but try to keep text styling like bold/italic.
+        # Use BeautifulSoup to parse and clean the description HTML, removing hrefs
+        soup = BeautifulSoup(desc, 'html.parser')
+        for a_tag in soup.find_all('a'):
+            a_tag.unwrap() # Remove the <a> tag but keep its content
 
-        # Heuristically format text that looks like dice notation or attack bonuses
-        def replace_rollables(match):
-            text = match.group(0)
-            # Remove any existing <a> tags or complex span structures from the source desc
-            text = text.replace('<a', '<span').replace('</a>', '</span>') # Replace <a> with <span> to remove links
-            # Try to simplify existing span styles or data attributes for consistency
-            text = re.sub(r'<span[^>]*data-[^>]*>', '', text) # Remove data attributes
-            text = re.sub(r'<span[^>]*style="[^"]*"[^>]*>', '', text) # Remove inline styles from internal spans
-            text = text.replace('</span>', '') # Remove closing span tags
-            return text
-
-        import re
-        # This regex looks for patterns like "+NUM", "(XdY + Z)", "DC NUM", "NUM (XdY)"
-        # It's a best effort to clean up potentially complex text.
-        desc = re.sub(r'\+?\d+d\d+(\s*\+\s*\d+)?|\bDC\s*\d+|\d+\s*\((\d+d\d+\s*[\+\-]?\s*\d*)\)|\+?\d+(?=\s*to hit)', r'<span style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">\g<0></span>', desc)
+        # Convert back to string and ensure it's clean (no extra newlines from BeautifulSoup)
+        cleaned_desc = str(soup).strip()
         
-        # Ensure <em> and <strong> tags are preserved or added where appropriate, based on typical D&D Beyond style
-        # For example, ability names are usually bold and italic.
+        # Add emphasis/strong tags as per example
         if heading_text == "Traits":
-             content_html += f"""<p style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin-bottom: 10px;"><em style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><strong style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">{name}.</strong></em>&nbsp;{desc}</p>"""
+             content_html += f"""<p style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin-bottom: 10px;"><em style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><strong style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">{name}.</strong></em>&nbsp;{cleaned_desc}</p>"""
         else: # For Actions and Legendary Actions, name is usually bold, then desc follows.
-            content_html += f"""<p style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin-bottom: 10px;"><strong style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">{name}.</strong>&nbsp;{desc}</p>"""
+            content_html += f"""<p style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin-bottom: 10px;"><strong style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">{name}.</strong>&nbsp;{cleaned_desc}</p>"""
             
     return f"""
 <div class="mon-stat-block__description-block" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">
@@ -237,73 +260,53 @@ def format_monster_notes(monster_data):
     mimicking D&D Beyond stat block styling for the 'notes' field.
     All href links are removed.
     """
-    html_parts = []
+    # The outer structure for the whole stat block as per the example provided
+    # This assumes the target display environment expects this full container
+    # with the h1 inside, as seen in the user's example.
+    # Note: the example HTML has the full stat block content inside an <h1>
+    # which is unusual. We'll replicate that structure exactly.
+    
+    header_html = _generate_header_html(monster_data)
+    attributes_html = _generate_attributes_html(monster_data)
+    ability_scores_html = _generate_ability_scores_html_for_main_block(monster_data)
+    tidbits_html = _generate_tidbits_html(monster_data)
+    
+    traits_html = _generate_description_block_html("Traits", monster_data.get('special_abilities', []))
+    actions_html = _generate_description_block_html("Actions", monster_data.get('actions', []))
+    legendary_actions_html = _generate_description_block_html("Legendary Actions", monster_data.get('legendary_actions', []))
 
-    # Overall container structure as per example
-    html_parts.append(f"""<div class="mon-stat-block__header" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; line-height: 1.1; background-color: rgb(255, 255, 255);">
+    # Combine all parts into the final HTML string, following the nested structure
+    # from the provided ideal output.
+    full_notes_html = f"""
+<div class="mon-stat-block__header" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; line-height: 1.1; background-color: rgb(255, 255, 255);">
     <div class="mon-stat-block__name" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">
         <div class="name" style="">
             <h1 style="padding: 0px; font-variant-numeric: normal; font-variant-east-asian: normal; font-variant-caps: small-caps; font-variant-alternates: normal; font-variant-position: normal; font-variant-emoji: normal; letter-spacing: 1px; color: rgb(109, 0, 0); font-size: 1.8rem; line-height: 1; break-after: avoid; font-family: Georgia, &quot;Times New Roman&quot;, serif;">
-                <div class="mon-stat-block__header" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; line-height: 1.1; color: rgb(0, 0, 0); font-family: &quot;Scala Sans Offc&quot;, Roboto, Helvetica, sans-serif; font-size: 15px; font-variant-caps: normal; letter-spacing: normal;">
-                    <div class="mon-stat-block__name" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold; font-size: 34px; font-family: MrsEavesSmallCaps, Roboto, Helvetica, sans-serif; color: rgb(130, 32, 0);">
-                        <span class="mon-stat-block__name-link" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; color: rgb(130, 32, 0); text-decoration: none;">{monster_data.get('name', 'Unnamed Monster')}</span>
-                    </div>
-                    <div class="mon-stat-block__meta" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-style: italic; margin-bottom: 15px;">{monster_data.get('size', 'Unknown')} {monster_data.get('type', 'creature')}{f' ({monster_data["subtype"]})' if monster_data.get('subtype') else ''}, {monster_data.get('alignment', 'unaligned')}</div>
-                </div>
+                {header_html}
                 <div class="mon-stat-block__separator" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; color: rgb(0, 0, 0); font-family: &quot;Scala Sans Offc&quot;, Roboto, Helvetica, sans-serif; font-size: 15px; font-variant-caps: normal; letter-spacing: normal;"><img class="mon-stat-block__separator-img" alt="" src="https://www.dndbeyond.com/file-attachments/0/579/stat-block-header-bar.svg" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; border-style: initial; border-color: initial; border-image: initial; min-height: 10px;"></div>
-                <div class="mon-stat-block__attributes" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; color: rgb(0, 0, 0); font-family: &quot;Scala Sans Offc&quot;, Roboto, Helvetica, sans-serif; font-size: 15px; font-variant-caps: normal; letter-spacing: normal;">
-                    <div class="mon-stat-block__attribute" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin: 5px 0px; color: rgb(130, 32, 0); line-height: 1.2;">
-                        <span class="mon-stat-block__attribute-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">Armor Class</span>&nbsp;<span class="mon-stat-block__attribute-value" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><span class="mon-stat-block__attribute-data-value" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{monster_data.get('armor_class', 'N/A')}&nbsp;</span><span class="mon-stat-block__attribute-data-extra" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">(natural armor)</span></span>
-                    </div>
-                    <div class="mon-stat-block__attribute" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin: 5px 0px; color: rgb(130, 32, 0); line-height: 1.2;">
-                        <span class="mon-stat-block__attribute-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">Hit Points</span>&nbsp;<span class="mon-stat-block__attribute-data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><span class="mon-stat-block__attribute-data-value" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{monster_data.get('hit_points', 'N/A')}&nbsp;</span><span class="mon-stat-block__attribute-data-extra" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">({monster_data.get('hit_dice', 'N/A')})</span></span>
-                    </div>
-                    <div class="mon-stat-block__attribute" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin: 5px 0px; color: rgb(130, 32, 0); line-height: 1.2;">
-                        <span class="mon-stat-block__attribute-label" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">Speed</span>&nbsp;<span class="mon-stat-block__attribute-data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{monster_data.get('speed', 'N/A')}</span>
-                    </div>
-                </div>
+                {attributes_html}
                 <div class="mon-stat-block__stat-block" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; color: rgb(0, 0, 0); font-family: &quot;Scala Sans Offc&quot;, Roboto, Helvetica, sans-serif; font-size: 15px; font-variant-caps: normal; letter-spacing: normal;">
                     <div class="mon-stat-block__separator" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><img class="mon-stat-block__separator-img" alt="" src="https://www.dndbeyond.com/file-attachments/0/579/stat-block-header-bar.svg" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; border-style: initial; border-color: initial; border-image: initial; min-height: 10px;"></div>
                     <div class="ability-block" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; display: flex; flex-wrap: wrap; margin: 0px; color: rgb(130, 32, 0);">
-                        {_generate_ability_scores_html_for_main_block(monster_data)}
+                        {ability_scores_html}
                     </div>
                     <div class="mon-stat-block__separator" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><img class="mon-stat-block__separator-img" alt="" src="https://www.dndbeyond.com/file-attachments/0/579/stat-block-header-bar.svg" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; border-style: initial; border-color: initial; border-image: initial; min-height: 10px;"></div>
                 </div>
                 <div class="mon-stat-block__tidbits" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; color: rgb(0, 0, 0); font-family: &quot;Scala Sans Offc&quot;, Roboto, Helvetica, sans-serif; font-size: 15px; font-variant-caps: normal; letter-spacing: normal;">
-                    {_generate_tidbits_html(monster_data)}
+                    {tidbits_html}
                 </div>
                 <div class="mon-stat-block__separator" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; color: rgb(0, 0, 0); font-family: &quot;Scala Sans Offc&quot;, Roboto, Helvetica, sans-serif; font-size: 15px; font-variant-caps: normal; letter-spacing: normal;"><img class="mon-stat-block__separator-img" alt="" src="https://www.dndbeyond.com/file-attachments/0/579/stat-block-header-bar.svg" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; border-style: initial; border-color: initial; border-image: initial; min-height: 10px;"></div>
                 <div class="mon-stat-block__description-blocks" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin-top: 20px; color: rgb(0, 0, 0); font-family: &quot;Scala Sans Offc&quot;, Roboto, Helvetica, sans-serif; font-size: 15px; font-variant-caps: normal; letter-spacing: normal;">
-                    {_generate_description_block_html("Traits", monster_data.get('special_abilities', []))}
-                    {_generate_description_block_html("Actions", monster_data.get('actions', []))}
-                    {_generate_description_block_html("Legendary Actions", monster_data.get('legendary_actions', []))}
+                    {traits_html}
+                    {actions_html}
+                    {legendary_actions_html}
                 </div>
             </h1>
         </div>
     </div>
-</div>""")
-
-    return "".join(html_parts)
-
-def _generate_ability_scores_html_for_main_block(monster_data):
-    """
-    Generates the HTML for the ability scores block,
-    specifically for the main stat block HTML.
-    """
-    abilities_html = ""
-    ability_order = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']
-
-    for stat in ability_order:
-        score = monster_data.get(stat, 'N/A')
-        mod_text = _get_modifier_text(score)
-        stat_abbr = stat[:3].upper()
-        
-        abilities_html += f"""
-<div class="ability-block__stat ability-block__stat--{stat_abbr.lower()}" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; width: 59.1667px; padding: 5px 0px; text-align: center;">
-    <div class="ability-block__heading" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;">{stat_abbr}</div>
-    <div class="ability-block__data" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;"><span class="ability-block__score" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">{score}</span>&nbsp;<span class="ability-block__modifier" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; margin-left: 2px;">{mod_text}</span></div>
-</div>"""
-    return abilities_html
+</div>
+"""
+    return full_notes_html
 
 
 def convert_monster_data(input_json_path, output_json_path):
@@ -326,32 +329,24 @@ def convert_monster_data(input_json_path, output_json_path):
             # Ensure HP is an integer for totalHp
             hp_value = int(monster.get('hit_points', 0))
             
-            # Determine bgColor based on monster type for visual distinction
-            # This is a placeholder; you might want a more sophisticated mapping
-            bg_color = "bg-gray-200" # Default color
-            if "dragon" in monster.get('type', '').lower():
-                bg_color = "bg-red-500"
-            elif "aberration" in monster.get('type', '').lower():
-                bg_color = "bg-purple-500"
-            elif "humanoid" in monster.get('type', '').lower():
-                bg_color = "bg-green-500"
-            elif "undead" in monster.get('type', '').lower():
-                bg_color = "bg-zinc-700"
-            elif "beast" in monster.get('type', '').lower():
-                bg_color = "bg-yellow-500"
-            elif "fiend" in monster.get('type', '').lower():
-                bg_color = "bg-red-900"
-
-
+            # Get CR for appending to name
+            cr = monster.get('challenge_rating', 'N/A')
+            
+            # Construct the new name (reverted to original as requested)
+            original_name = monster.get('name', 'Unnamed Monster')
+            
             converted_monster = {
-                "name": monster.get('name', 'Unnamed Monster'),
+                "name": original_name,
                 "hp": str(hp_value),
                 "totalHp": str(hp_value),
-                "statuses": [],
-                "bgColor": bg_color,
-                "bgImageKey": "", # No image URLs from dump
+                # "statuses": [], # Omitted as requested
+                # "bgColor": "", # Omitted as requested
+                # "bgImageKey": "", # Omitted as requested
+                "version": "dnd_5e", # Added as requested
+                "challenge": f"CR {cr}", # Added as requested
                 "notes": format_monster_notes(monster) # This now generates the full HTML string
             }
+
             converted_monsters.append(converted_monster)
         except Exception as e:
             print(f"Warning: Failed to process monster '{monster.get('name', 'Unknown')}' due to: {e}")
