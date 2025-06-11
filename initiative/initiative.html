@@ -118,6 +118,19 @@
         .text-readable {
             text-shadow: 0 1px 3px rgba(0,0,0,0.6);
         }
+        
+        /* Styles for the Notes Modal's rich text editor */
+        #notes-content-editable:focus {
+            outline: 2px solid #3b82f6; /* Blue outline on focus */
+        }
+        #notes-content-editable ul {
+            list-style: disc;
+            margin-left: 20px;
+        }
+        #notes-content-editable ol {
+            list-style: decimal;
+            margin-left: 20px;
+        }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -189,6 +202,9 @@
                 <button id="clear-statuses-btn" class="bg-gray-400 text-white font-bold py-2 px-5 rounded-lg shadow-md transition-all duration-200 cursor-not-allowed opacity-50" disabled>
                     Clear Statuses (X)
                 </button>
+                <button id="notes-btn" class="bg-gray-400 text-white font-bold py-2 px-5 rounded-lg shadow-md transition-all duration-200 cursor-not-allowed opacity-50" disabled>
+                    Notes (N)
+                </button>
             </div>
             <!-- New row for clear all data button -->
             <div class="mt-4">
@@ -211,6 +227,20 @@
             </div>
         </div>
     </div>
+    
+    <!-- Notes Modal -->
+    <div id="notes-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-2xl p-6 w-full max-w-2xl h-full max-h-[80vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 flex-shrink-0">
+                <h2 id="notes-title" class="text-xl font-bold text-gray-800">Notes for...</h2>
+                <button id="close-notes-modal-btn" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-red-600 focus:outline-none">Close</button>
+            </div>
+            <div id="notes-content-editable" contenteditable="true" class="flex-grow overflow-y-auto p-4 border border-gray-300 rounded-md bg-gray-50">
+                <!-- Rich text content goes here -->
+            </div>
+        </div>
+    </div>
+
 
     <!-- JavaScript Logic -->
     <script>
@@ -233,6 +263,12 @@
         const applyUrlButton = document.getElementById('apply-url-btn');
         const imageFileInput = document.getElementById('image-file-input');
         const clearAllDataButton = document.getElementById('clear-all-data-btn');
+        const notesButton = document.getElementById('notes-btn');
+        const notesModal = document.getElementById('notes-modal');
+        const closeNotesModalButton = document.getElementById('close-notes-modal-btn');
+        const notesTitle = document.getElementById('notes-title');
+        const notesContentEditable = document.getElementById('notes-content-editable');
+
 
         // --- Data ---
         const colorPalette = [
@@ -244,7 +280,7 @@
         
         const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
 
-        // --- IndexedDB Setup ---
+        // --- IndexedDB Setup (Still used for images) ---
         let db;
         const DB_NAME = 'initiativeTrackerDB';
         const DB_VERSION = 1;
@@ -275,57 +311,41 @@
         }
 
         async function saveImageToIndexedDB(id, blob) {
+            if (!db) await openIndexedDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([IMAGE_STORE_NAME], 'readwrite');
                 const store = transaction.objectStore(IMAGE_STORE_NAME);
-                const request = store.put(blob, id); // Store blob with the generated ID
+                const request = store.put(blob, id);
 
-                request.onsuccess = () => {
-                    resolve();
-                };
-
-                request.onerror = (event) => {
-                    console.error('Error saving image to IndexedDB:', event.target.errorCode);
-                    reject(event.target.errorCode);
-                };
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => reject(event.target.errorCode);
             });
         }
 
         async function loadImageFromIndexedDB(id) {
+            if (!db) await openIndexedDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([IMAGE_STORE_NAME], 'readonly');
                 const store = transaction.objectStore(IMAGE_STORE_NAME);
                 const request = store.get(id);
 
-                request.onsuccess = (event) => {
-                    resolve(event.target.result); // This will be the Blob
-                };
-
-                request.onerror = (event) => {
-                    console.error('Error loading image from IndexedDB:', event.target.errorCode);
-                    reject(event.target.errorCode);
-                };
+                request.onsuccess = (event) => resolve(event.target.result);
+                request.onerror = (event) => reject(event.target.errorCode);
             });
         }
 
         async function deleteImageFromIndexedDB(id) {
+            if (!db) await openIndexedDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([IMAGE_STORE_NAME], 'readwrite');
                 const store = transaction.objectStore(IMAGE_STORE_NAME);
                 const request = store.delete(id);
 
-                request.onsuccess = () => {
-                    resolve();
-                };
-
-                request.onerror = (event) => {
-                    console.error('Error deleting image from IndexedDB:', event.target.errorCode);
-                    reject(event.target.errorCode);
-                };
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => reject(event.target.errorCode);
             });
         }
 
-        // Helper function to convert base64 to Blob
         function base64ToBlob(base64, mimeType) {
             const byteCharacters = atob(base64);
             const byteNumbers = new Array(byteCharacters.length);
@@ -337,128 +357,120 @@
         }
 
 
-        // --- Cookie Functions for Persistence ---
-        function setCookie(name, value, days) {
-            let expires = "";
-            if (days) {
-                const date = new Date();
-                date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-                expires = "; expires=" + date.toUTCString();
+        // --- MODIFIED: LocalStorage Persistence ---
+        
+        function saveState() {
+            try {
+                const order = [];
+                const currentIds = new Set();
+                
+                // Save each item and build the order array
+                Array.from(shelf.children).forEach(item => {
+                    const id = item.id;
+                    order.push(id);
+                    currentIds.add(id);
+
+                    let itemData;
+                    if (item.classList.contains('character-card')) {
+                        const nameSpan = item.querySelector('.font-bold.text-lg');
+                        const hpSpan = item.querySelector('.text-2xl.font-mono');
+                        const statusContainer = item.querySelector('.status-container');
+                        const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
+                        const bgColorClass = Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '';
+                        const bgImage = item.dataset.bgImageKey || '';
+                        
+                        itemData = {
+                            type: 'character',
+                            name: nameSpan ? nameSpan.textContent.trim() : '',
+                            hp: hpSpan ? hpSpan.textContent.trim() : '',
+                            statuses: statuses,
+                            bgColor: bgColorClass,
+                            bgImage: bgImage,
+                            notes: item.dataset.notes || ''
+                        };
+                    } else if (item.id.startsWith('turn-marker')) {
+                        const turnCounter = item.querySelector('.turn-counter');
+                        itemData = {
+                            type: 'turnMarker',
+                            turn: turnCounter ? turnCounter.textContent.trim() : '1'
+                        };
+                    }
+                    localStorage.setItem(id, JSON.stringify(itemData));
+                });
+
+                // Save the current turn order
+                localStorage.setItem('initiativeOrder', JSON.stringify(order));
+                
+                // Cleanup orphaned items from localStorage
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key !== 'initiativeOrder' && !currentIds.has(key)) {
+                        localStorage.removeItem(key);
+                        console.log(`Cleaned up orphaned item: ${key}`);
+                    }
+                }
+                console.log('State saved to localStorage.');
+
+            } catch (e) {
+                console.error("Failed to save state to localStorage:", e);
+                // Potentially show a user-facing error message here
             }
-            document.cookie = name + "=" + (value || "")  + expires + "; path=/";
         }
 
-        function getCookie(name) {
-            const nameEQ = name + "=";
-            const ca = document.cookie.split(';');
-            for(let i = 0; i < ca.length; i++) {
-                let c = ca[i];
-                while (c.charAt(0) === ' ') c = c.substring(1, c.length);
-                if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
-            }
-            return null;
-        }
+        async function loadState() {
+            const orderJSON = localStorage.getItem('initiativeOrder');
+            if (!orderJSON) return false;
 
-        function saveStateToCookie() {
-            const state = [];
-            Array.from(shelf.children).forEach(item => {
-                if (item.id === 'turn-marker') {
-                    const turnCounter = item.querySelector('.turn-counter');
-                    state.push({ 
-                        type: 'turnMarker',
-                        turn: turnCounter ? turnCounter.textContent.trim() : '1'
-                    });
-                } else { // It's a character card
-                    const nameSpan = item.querySelector('.font-bold.text-lg');
-                    const hpSpan = item.querySelector('.text-2xl.font-mono');
-                    const statusContainer = item.querySelector('.status-container');
+            try {
+                const order = JSON.parse(orderJSON);
+                shelf.innerHTML = ''; 
 
-                    const statuses = Array.from(statusContainer.querySelectorAll('span')).map(s => s.textContent);
-                    const bgColorClass = Array.from(item.classList).find(cls => colorPalette.includes(cls));
+                for (const id of order) {
+                    const itemJSON = localStorage.getItem(id);
+                    if (!itemJSON) continue; // Skip if item data is missing
                     
-                    let bgImage = item.style.backgroundImage;
-                    let indexedDbImageId = item.dataset.indexedDbImageId || ''; 
+                    const itemData = JSON.parse(itemJSON);
 
-                    if (indexedDbImageId) {
-                        bgImage = `indexeddb://${indexedDbImageId}`;
-                    } else if (bgImage) {
-                        const urlMatch = bgImage.match(/^url\(['"]?(.*?)['"]?\)$/);
-                        bgImage = urlMatch ? urlMatch[1] : '';
-                    }
-
-                    state.push({
-                        type: 'character',
-                        name: nameSpan ? nameSpan.textContent.trim() : '',
-                        hp: hpSpan ? hpSpan.textContent.trim() : '',
-                        statuses: statuses,
-                        bgColor: bgColorClass || '',
-                        bgImage: bgImage || ''
-                    });
-                }
-            });
-            setCookie('initiativeTrackerState', JSON.stringify(state), 365);
-            console.log('State saved to cookie.');
-        }
-
-        async function loadStateFromCookie() {
-            const savedState = getCookie('initiativeTrackerState');
-            if (savedState) {
-                try {
-                    const state = JSON.parse(savedState);
-                    shelf.innerHTML = ''; 
-
-                    for (const itemData of state) {
-                        if (itemData.type === 'turnMarker') {
-                            createTurnMarker(itemData.turn);
-                        } else if (itemData.type === 'character') {
-                            let actualBackgroundImage = itemData.bgImage;
-                            let indexedDbImageId = '';
-
-                            if (itemData.bgImage.startsWith('indexeddb://')) {
-                                indexedDbImageId = itemData.bgImage.substring('indexeddb://'.length);
-                                try {
-                                    const blob = await loadImageFromIndexedDB(indexedDbImageId);
-                                    if (blob) {
-                                        actualBackgroundImage = URL.createObjectURL(blob);
-                                    } else {
-                                        console.warn(`Image with ID ${indexedDbImageId} not found in IndexedDB.`);
-                                        actualBackgroundImage = '';
-                                    }
-                                } catch (e) {
-                                    console.error(`Failed to load image from IndexedDB for ID ${indexedDbImageId}:`, e);
-                                    actualBackgroundImage = '';
-                                }
+                    if (itemData.type === 'turnMarker') {
+                        createTurnMarker(id, itemData.turn);
+                    } else if (itemData.type === 'character') {
+                        let actualBackgroundImage = '';
+                        if (itemData.bgImage) {
+                             if (itemData.bgImage.startsWith('indexeddb://')) {
+                                const imageId = itemData.bgImage.substring('indexeddb://'.length);
+                                const blob = await loadImageFromIndexedDB(imageId).catch(e => console.error(e));
+                                if (blob) actualBackgroundImage = URL.createObjectURL(blob);
+                            } else {
+                                actualBackgroundImage = itemData.bgImage; // It's a direct URL
                             }
-                            
-                            const characterOptions = {
-                                backgroundColorClass: itemData.bgColor, 
-                                backgroundImage: itemData.bgImage.startsWith('indexeddb://') ? itemData.bgImage : actualBackgroundImage 
-                            };
-                            createCharacter(
-                                itemData.name, 
-                                itemData.hp, 
-                                itemData.statuses, 
-                                characterOptions
-                            );
                         }
+                       
+                        const options = {
+                            id: id,
+                            backgroundColorClass: itemData.bgColor,
+                            backgroundImage: actualBackgroundImage,
+                            bgImageKey: itemData.bgImage
+                        };
+                        createCharacter(
+                            itemData.name, itemData.hp, itemData.statuses,
+                            itemData.notes, options
+                        );
                     }
-                    console.log('State loaded from cookie.');
-                    updateActionButtonsState();
-                    return true;
-                } catch (e) {
-                    console.error("Error parsing saved state from cookie:", e);
-                    return false;
                 }
+                console.log('State loaded from localStorage.');
+                updateActionButtonsState();
+                return true;
+            } catch (e) {
+                console.error("Failed to load or parse state from localStorage:", e);
+                return false;
             }
-            return false;
         }
-
 
         // --- Core Functions for Item States ---
 
         function updateActionButtonsState() {
             const selectedItems = document.querySelectorAll('.highlighted');
-            const buttonsToUpdate = [removeButton, copyButton, addStatusButton, clearStatusesButton];
+            const buttonsToUpdate = [removeButton, copyButton, addStatusButton, clearStatusesButton, notesButton];
             
             if (selectedItems.length > 0) {
                 buttonsToUpdate.forEach(button => {
@@ -469,7 +481,7 @@
                 copyButton.classList.add('bg-teal-600', 'hover:bg-teal-700', 'focus:ring-4', 'focus:ring-teal-300');
                 addStatusButton.classList.add('bg-purple-600', 'hover:bg-purple-700', 'focus:ring-4', 'focus:ring-purple-300');
                 clearStatusesButton.classList.add('bg-yellow-500', 'hover:bg-yellow-600', 'focus:ring-4', 'focus:ring-yellow-300');
-
+                notesButton.classList.add('bg-indigo-600', 'hover:bg-indigo-700', 'focus:ring-4', 'focus:ring-indigo-300');
             } else {
                 buttonsToUpdate.forEach(button => {
                     button.disabled = true;
@@ -479,6 +491,7 @@
                         'bg-teal-600', 'hover:bg-teal-700', 'focus:ring-teal-300',
                         'bg-purple-600', 'hover:bg-purple-700', 'focus:ring-purple-300',
                         'bg-yellow-500', 'hover:bg-yellow-600', 'focus:ring-yellow-300',
+                        'bg-indigo-600', 'hover:bg-indigo-700', 'focus:ring-indigo-300',
                         'focus:ring-4'
                     );
                 });
@@ -496,15 +509,14 @@
             });
             item.addEventListener('dragend', () => {
                 item.classList.remove('dragging');
-                saveStateToCookie(); 
+                saveState(); 
             });
         }
 
         function initializeSelectable(item) {
-            if (item.id === 'turn-marker') return;
-
+             if (!item.classList.contains('character-card')) return;
             item.addEventListener('click', (event) => {
-                if (event.target.getAttribute('contenteditable') === 'true') return;
+                if (event.target.getAttribute('contenteditable') === 'true' || event.target.closest('.notes-indicator')) return;
                 
                 if (event.shiftKey) {
                     item.classList.toggle('highlighted');
@@ -524,32 +536,16 @@
         }
 
         function initializeHpField(hpSpan) {
-            hpSpan.addEventListener('focus', () => {
-                hpSpan.dataset.originalHp = hpSpan.textContent.trim();
-            });
+            hpSpan.addEventListener('focus', () => hpSpan.dataset.originalHp = hpSpan.textContent.trim());
 
             const resolveHp = () => {
-                const originalHp = parseInt(hpSpan.dataset.originalHp, 10);
                 const expression = hpSpan.textContent.trim();
-                if (isNaN(originalHp)) return; 
-
                 let newHp;
                 try {
-                    const sanitizedExpression = expression.replace(/\s/g, ''); 
-                    const validCharsRegex = /^[\d+\-*/.]+$/; 
-                    if (!validCharsRegex.test(sanitizedExpression)) {
-                        throw new Error("Invalid characters or format in HP expression.");
-                    }
-                    newHp = new Function('return (' + sanitizedExpression + ')')();
-                    if (!Number.isFinite(newHp)) {
-                        throw new Error("Invalid calculation result.");
-                    }
-                } catch (error) {
-                    console.error("HP calculation error:", error);
-                    newHp = originalHp; 
-                }
+                    newHp = new Function('return (' + expression.replace(/[^-()\d/*+.]/g, '') + ')')();
+                } catch (e) { newHp = parseInt(expression, 10) || 0; }
                 hpSpan.textContent = Math.round(newHp);
-                saveStateToCookie(); 
+                saveState(); 
             };
             
             hpSpan.addEventListener('blur', resolveHp);
@@ -558,20 +554,17 @@
                 else if (e.key === 'Escape') { hpSpan.textContent = hpSpan.dataset.originalHp; hpSpan.blur(); }
             });
 
-            const nameSpan = hpSpan.parentElement.previousElementSibling;
-            if (nameSpan && nameSpan.getAttribute('contenteditable') === 'true') {
-                 nameSpan.addEventListener('blur', saveStateToCookie);
-                 nameSpan.addEventListener('keydown', (e) => {
-                     if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
-                 });
+            const nameSpan = hpSpan.closest('.draggable').querySelector('.font-bold.text-lg');
+            if (nameSpan) {
+                nameSpan.addEventListener('blur', saveState);
+                nameSpan.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }});
             }
         }
         
         function initializeContextMenu(item) {
             item.addEventListener('contextmenu', e => {
                 e.preventDefault();
-                
-                if (item.id === 'turn-marker') return;
+                if (!item.classList.contains('character-card')) return;
 
                 if (!item.classList.contains('highlighted')) {
                     document.querySelectorAll('.highlighted').forEach(el => el.classList.remove('highlighted'));
@@ -585,73 +578,47 @@
             });
         }
 
-        // --- Drag & Drop Logic ---
         shelf.addEventListener('dragover', e => {
             e.preventDefault();
             const draggingItem = document.querySelector('.dragging');
             if (!draggingItem) return;
 
             const afterElement = getDragAfterElement(shelf, e.clientX, e.clientY);
-            
-            if (afterElement == null) {
-                shelf.appendChild(draggingItem);
-            } else {
-                shelf.insertBefore(draggingItem, afterElement);
-            }
+            if (afterElement == null) shelf.appendChild(draggingItem);
+            else shelf.insertBefore(draggingItem, afterElement);
         });
 
         function getDragAfterElement(container, x, y) {
             const draggableElements = [...container.querySelectorAll('.draggable:not(.dragging)')];
-
             return draggableElements.reduce((closest, child) => {
                 const box = child.getBoundingClientRect();
                 if (y > box.top && y < box.bottom) {
                     const offset = x - box.left - box.width / 2;
-                    if (offset < 0 && offset > closest.offset) {
-                        return { offset: offset, element: child };
-                    } else {
-                        return closest;
-                    }
+                    if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
                 }
                 return closest;
-
             }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
 
-        function createCharacter(name, hp, statuses = [], options = {}) {
+        // --- MODIFIED: Character/Marker Creation Functions now handle IDs ---
+        function createCharacter(name, hp, statuses = [], notes = '', options = {}) {
             const { 
-                insertionElement = null, 
-                backgroundColorClass = null, 
-                backgroundImage = ''
+                id = null, insertionElement = null, backgroundColorClass = null, 
+                backgroundImage = '', bgImageKey = ''
             } = options;
 
             const newItem = document.createElement('div');
+            newItem.id = id || `char-${crypto.randomUUID()}`;
+            newItem.classList.add('character-card');
+
             const newColor = backgroundColorClass || colorPalette[colorIndex++ % colorPalette.length];
-            newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white`;
+            newItem.className = `draggable ${newColor} rounded-md w-32 min-h-56 shadow-lg flex flex-col justify-between p-2 text-white character-card`;
             
-            if (backgroundImage.startsWith('indexeddb://')) {
-                const imageId = backgroundImage.substring('indexeddb://'.length);
-                newItem.dataset.indexedDbImageId = imageId;
-                loadImageFromIndexedDB(imageId).then(blob => {
-                    if (blob) {
-                        const objectUrl = URL.createObjectURL(blob);
-                        newItem.style.backgroundImage = `url('${objectUrl}')`;
-                        newItem.dataset.objectUrl = objectUrl;
-                    } else {
-                        console.warn(`Copied image with ID ${imageId} not found in IndexedDB.`);
-                    }
-                }).catch(e => {
-                    console.error(`Error loading copied IndexedDB image for ID ${imageId}:`, e);
-                });
-            } else if (backgroundImage) {
-                newItem.style.backgroundImage = `url('${backgroundImage}')`;
-                delete newItem.dataset.indexedDbImageId;
-                if (newItem.dataset.objectUrl) {
-                    URL.revokeObjectURL(newItem.dataset.objectUrl);
-                    delete newItem.dataset.objectUrl;
-                }
-            }
+            newItem.dataset.notes = notes;
+            newItem.dataset.bgImageKey = bgImageKey;
             
+            if (backgroundImage) newItem.style.backgroundImage = `url('${backgroundImage}')`;
+
             const nameContent = name || '';
             const namePlaceholder = name ? '' : 'data-placeholder="Name"';
 
@@ -663,7 +630,9 @@
                         <span contenteditable="true" class="text-2xl font-mono p-1 text-readable">${hp}</span>
                     </div>
                 </div>
-                <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2"></div>`;
+                <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2"></div>
+                <div class="absolute bottom-1 right-1 notes-indicator text-lg" style="display: none;">📝</div>
+            `;
 
             const statusContainer = newItem.querySelector('.status-container');
             statuses.forEach(symbol => {
@@ -673,6 +642,7 @@
                  statusContainer.appendChild(statusIcon);
             });
             
+            updateNotesIndicator(newItem);
             initializeHpField(newItem.querySelector('.text-2xl.font-mono'));
             initializeDraggable(newItem);
             initializeSelectable(newItem);
@@ -683,23 +653,18 @@
 
             newItem.classList.add('pop-in-animation');
             newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
-            saveStateToCookie(); 
-
+            
+            if (!id) saveState();
             return newItem; 
         }
         
-        // *** MODIFIED: Function now creates an L-shaped marker with horizontal text ***
-        function createTurnMarker(turn = '1') {
+        function createTurnMarker(id = null, turn = '1') {
             const turnMarker = document.createElement('div');
-            turnMarker.id = 'turn-marker';
-            // The draggable container is now the L-shape itself, created with flexbox.
-            // It will align with other items in the main shelf container.
-            turnMarker.className = 'draggable flex items-end h-56'; // Height matches characters
+            turnMarker.id = id || `turn-marker-${crypto.randomUUID()}`;
+            turnMarker.className = 'draggable flex items-end h-56';
 
             turnMarker.innerHTML = `
-                <!-- Vertical bar -->
                 <div class="w-4 h-full bg-black rounded-l-lg"></div>
-                <!-- Horizontal box with text -->
                 <div class="bg-black text-white p-2 rounded-r-lg shadow-lg">
                     <div class="text-xs font-semibold uppercase text-white/80 select-none">Turn</div>
                     <span class="turn-counter text-2xl font-mono" contenteditable="true">${turn}</span>
@@ -708,51 +673,44 @@
             
             initializeDraggable(turnMarker);
             
-            // Add event listener to save state when the counter is manually edited
             const turnCounterSpan = turnMarker.querySelector('.turn-counter');
-            turnCounterSpan.addEventListener('blur', saveStateToCookie);
+            turnCounterSpan.addEventListener('blur', saveState);
             turnCounterSpan.addEventListener('keydown', (e) => {
                  if (e.key === 'Enter') { e.preventDefault(); turnCounterSpan.blur(); }
             });
 
             shelf.appendChild(turnMarker);
+            if(!id) saveState();
         }
 
         // --- Modal & Menu Logic ---
         function populateSymbolModal(selectedItems) {
             symbolGrid.innerHTML = '';
-            
             statusSymbols.forEach((symbol) => {
                 const symbolButton = document.createElement('button');
                 symbolButton.className = "relative text-3xl p-4 rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500";
                 
-                const allHaveStatus = selectedItems.length > 0 && Array.from(selectedItems).every(item => 
-                    Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent).includes(symbol)
-                );
-                
+                const allHaveStatus = Array.from(selectedItems).every(item => Array.from(item.querySelectorAll('.status-container span')).some(s => s.textContent === symbol));
                 if (allHaveStatus) symbolButton.classList.add('symbol-selected');
 
                 symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${(statusSymbols.indexOf(symbol) + 1) % 10}</span>`;
                 
                 symbolButton.addEventListener('click', () => {
-                    if (allHaveStatus) {
-                        selectedItems.forEach(item => {
-                            item.querySelectorAll('.status-container span').forEach(icon => {
+                    selectedItems.forEach(item => {
+                        const statusContainer = item.querySelector('.status-container');
+                        if (allHaveStatus) {
+                            statusContainer.querySelectorAll('span').forEach(icon => {
                                 if (icon.textContent === symbol) icon.remove();
                             });
-                        });
-                    } else {
-                        selectedItems.forEach(item => {
-                            if (!Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent).includes(symbol)) {
-                                const statusIcon = document.createElement('span');
-                                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
-                                statusIcon.textContent = symbol;
-                                item.querySelector('.status-container').appendChild(statusIcon);
-                            }
-                        });
-                    }
-                    populateSymbolModal(selectedItems);
-                    saveStateToCookie(); 
+                        } else if (!Array.from(statusContainer.querySelectorAll('span')).some(s => s.textContent === symbol)) {
+                            const statusIcon = document.createElement('span');
+                            statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
+                            statusIcon.textContent = symbol;
+                            statusContainer.appendChild(statusIcon);
+                        }
+                    });
+                    populateSymbolModal(selectedItems); // Refresh modal state
+                    saveState(); 
                 });
                 symbolGrid.appendChild(symbolButton);
             });
@@ -763,22 +721,15 @@
             colorPalette.forEach(color => {
                 const swatch = document.createElement('button');
                 swatch.className = `w-8 h-8 rounded-full ${color} border-2 border-white/50 hover:scale-110 transition-transform`;
-                swatch.dataset.color = color;
                 swatch.addEventListener('click', () => {
-                    const selectedItems = document.querySelectorAll('.highlighted');
-                    selectedItems.forEach(item => {
+                    document.querySelectorAll('.highlighted').forEach(item => {
                         item.style.backgroundImage = ''; 
-                        delete item.dataset.indexedDbImageId;
-                        if (item.dataset.objectUrl) {
-                            URL.revokeObjectURL(item.dataset.objectUrl);
-                            delete item.dataset.objectUrl;
-                        }
-
+                        item.dataset.bgImageKey = '';
                         item.classList.remove(...colorPalette);
                         item.classList.add(color);
                     });
                     contextMenu.classList.add('hidden');
-                    saveStateToCookie(); 
+                    saveState(); 
                 });
                 colorGrid.appendChild(swatch);
             });
@@ -787,69 +738,58 @@
         function handleStatusModalToggle() {
              if (!statusModal.classList.contains('hidden')) {
                 statusModal.classList.add('hidden');
-            } else {
-                if (!addStatusButton.disabled) {
-                    const selectedItems = document.querySelectorAll('.highlighted');
-                    if (selectedItems.length > 0) {
-                        populateSymbolModal(selectedItems);
-                        statusModal.classList.remove('hidden');
-                    }
+            } else if (!addStatusButton.disabled) {
+                const selectedItems = document.querySelectorAll('.highlighted');
+                if (selectedItems.length > 0) {
+                    populateSymbolModal(selectedItems);
+                    statusModal.classList.remove('hidden');
                 }
             }
         }
+        
+        function updateNotesIndicator(item) {
+            const indicator = item.querySelector('.notes-indicator');
+            if (indicator) indicator.style.display = item.dataset.notes ? 'block' : 'none';
+        }
 
+        function openNotesModal() {
+            const selectedItems = document.querySelectorAll('.highlighted');
+            if (selectedItems.length === 0) return;
+            
+            const firstItem = selectedItems[0];
+            const name = firstItem.querySelector('.font-bold.text-lg').textContent.trim() || 'Unnamed Character';
+            notesTitle.textContent = `Notes for ${name}`;
+            if (selectedItems.length > 1) notesTitle.textContent += ` (+${selectedItems.length - 1} others)`;
+            
+            notesContentEditable.innerHTML = firstItem.dataset.notes || '';
+            notesModal.classList.remove('hidden');
+        }
+
+        function closeNotesModal() {
+            const newNotes = notesContentEditable.innerHTML;
+            document.querySelectorAll('.highlighted').forEach(item => {
+                item.dataset.notes = newNotes;
+                updateNotesIndicator(item);
+            });
+            notesModal.classList.add('hidden');
+            saveState();
+        }
+
+        notesButton.addEventListener('click', openNotesModal);
+        closeNotesModalButton.addEventListener('click', closeNotesModal);
         addStatusButton.addEventListener('click', handleStatusModalToggle);
         closeModalButton.addEventListener('click', () => statusModal.classList.add('hidden'));
-        statusModal.addEventListener('click', (e) => {
-             if (e.target.id === 'status-modal') statusModal.classList.add('hidden');
-        });
+        statusModal.addEventListener('click', (e) => { if (e.target === statusModal) statusModal.classList.add('hidden'); });
         
-        // --- Context Menu Image Logic ---
-        applyUrlButton.addEventListener('click', async () => {
+        applyUrlButton.addEventListener('click', () => {
             const url = imageUrlInput.value.trim();
             if (url) {
-                if (url.startsWith('data:image/')) {
-                    const parts = url.match(/^data:(image\/.+);base64,(.*)$/);
-                    if (parts && parts.length === 3) {
-                        const mimeType = parts[1];
-                        const base64Data = parts[2];
-                        const blob = base64ToBlob(base64Data, mimeType);
-                        const imageId = crypto.randomUUID();
-
-                        try {
-                            await saveImageToIndexedDB(imageId, blob);
-                            document.querySelectorAll('.highlighted').forEach(item => {
-                                item.classList.remove(...colorPalette); 
-                                item.style.backgroundImage = `url('${url}')`;
-                                item.dataset.indexedDbImageId = imageId;
-                                item.dataset.objectUrl = url;
-                            });
-                            saveStateToCookie(); 
-                        } catch (error) {
-                            console.error('Failed to save data:image to IndexedDB:', error);
-                            document.querySelectorAll('.highlighted').forEach(item => {
-                                item.classList.remove(...colorPalette); 
-                                item.style.backgroundImage = `url('${url}')`;
-                                delete item.dataset.indexedDbImageId;
-                                if (item.dataset.objectUrl) URL.revokeObjectURL(item.dataset.objectUrl);
-                                delete item.dataset.objectUrl;
-                            });
-                        }
-                    } else {
-                        console.error('Invalid data:image format.');
-                    }
-                } else { 
-                    document.querySelectorAll('.highlighted').forEach(item => {
-                        item.classList.remove(...colorPalette); 
-                        item.style.backgroundImage = `url('${url}')`;
-                        delete item.dataset.indexedDbImageId;
-                        if (item.dataset.objectUrl) {
-                            URL.revokeObjectURL(item.dataset.objectUrl);
-                            delete item.dataset.objectUrl;
-                        }
-                    });
-                    saveStateToCookie();
-                }
+                document.querySelectorAll('.highlighted').forEach(item => {
+                    item.classList.remove(...colorPalette);
+                    item.style.backgroundImage = `url('${url}')`;
+                    item.dataset.bgImageKey = url;
+                });
+                saveState();
             }
             contextMenu.classList.add('hidden');
             imageUrlInput.value = '';
@@ -858,24 +798,15 @@
         imageFileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (file) {
-                const blob = file; 
-                const imageId = crypto.randomUUID(); 
-
-                try {
-                    await saveImageToIndexedDB(imageId, blob);
-                    const objectUrl = URL.createObjectURL(blob);
-
-                    document.querySelectorAll('.highlighted').forEach(item => {
-                        item.classList.remove(...colorPalette);
-                        item.style.backgroundImage = `url('${objectUrl}')`;
-                        item.dataset.indexedDbImageId = imageId; 
-                        item.dataset.objectUrl = objectUrl; 
-                    });
-                    saveStateToCookie(); 
-
-                } catch (error) {
-                    console.error('Failed to save or load image from IndexedDB:', error);
-                }
+                const imageId = `indexeddb://${crypto.randomUUID()}`;
+                await saveImageToIndexedDB(imageId, file);
+                const objectUrl = URL.createObjectURL(file);
+                document.querySelectorAll('.highlighted').forEach(item => {
+                    item.classList.remove(...colorPalette);
+                    item.style.backgroundImage = `url('${objectUrl}')`;
+                    item.dataset.bgImageKey = imageId;
+                });
+                saveState();
             }
             contextMenu.classList.add('hidden');
             e.target.value = null; 
@@ -886,17 +817,12 @@
             const lastItem = shelf.querySelector('.draggable:last-child');
             if(lastItem) {
                 shelf.insertBefore(lastItem, shelf.firstChild);
-                
-                const turnMarker = document.getElementById('turn-marker');
-                if (turnMarker && lastItem.id === 'turn-marker') {
-                    const counter = turnMarker.querySelector('.turn-counter');
+                if (lastItem.id.startsWith('turn-marker')) {
+                    const counter = lastItem.querySelector('.turn-counter');
                     let currentTurn = parseInt(counter.textContent, 10);
-                    if (!isNaN(currentTurn) && currentTurn > 1) {
-                        counter.textContent = currentTurn - 1;
-                    }
+                    if (!isNaN(currentTurn) && currentTurn > 1) counter.textContent = currentTurn - 1;
                 }
-                
-                saveStateToCookie(); 
+                saveState(); 
             }
         });
 
@@ -904,142 +830,79 @@
             const firstItem = shelf.querySelector('.draggable');
             if(firstItem) {
                 shelf.appendChild(firstItem);
-                
-                const turnMarker = document.getElementById('turn-marker');
-                if (turnMarker && firstItem.id === 'turn-marker') {
-                    const counter = turnMarker.querySelector('.turn-counter');
+                if (firstItem.id.startsWith('turn-marker')) {
+                    const counter = firstItem.querySelector('.turn-counter');
                     let currentTurn = parseInt(counter.textContent, 10);
-                    if (!isNaN(currentTurn)) {
-                        counter.textContent = currentTurn + 1;
-                    } else {
-                         counter.textContent = 1; // Reset if it's not a number
-                    }
+                    counter.textContent = isNaN(currentTurn) ? 1 : currentTurn + 1;
                 }
-                
-                saveStateToCookie();
+                saveState();
             }
         });
 
-        addButton.addEventListener('click', () => createCharacter('', 10));
+        addButton.addEventListener('click', () => createCharacter('', 10, [], '', {}));
 
-        removeButton.addEventListener('click', async () => {
-            const selectedItems = document.querySelectorAll('.highlighted');
-            for (const item of selectedItems) {
-                if (item.dataset.indexedDbImageId) {
-                    const currentImageId = item.dataset.indexedDbImageId;
-                    const otherElementsUsingId = Array.from(document.querySelectorAll('.draggable[data-indexed-db-image-id]')).filter(
-                        el => el !== item && el.dataset.indexedDbImageId === currentImageId
-                    );
-                    if (otherElementsUsingId.length === 0) {
-                        try {
-                            await deleteImageFromIndexedDB(currentImageId);
-                            console.log(`Deleted image ${currentImageId} from IndexedDB.`);
-                        } catch (e) {
-                            console.error(`Error deleting image ${currentImageId} from IndexedDB:`, e);
-                        }
-                    } else {
-                        console.log(`Image ${currentImageId} not deleted from IndexedDB, still referenced by other elements.`);
-                    }
-                }
-                if (item.dataset.objectUrl) {
-                    URL.revokeObjectURL(item.dataset.objectUrl);
-                    console.log(`Revoked Object URL: ${item.dataset.objectUrl}`);
-                }
-                item.remove();
-            }
+        removeButton.addEventListener('click', () => {
+            document.querySelectorAll('.highlighted').forEach(item => item.remove());
             updateActionButtonsState();
-            saveStateToCookie(); 
+            saveState(); 
         });
 
         copyButton.addEventListener('click', () => {
             const originals = document.querySelectorAll('.highlighted');
-            if (originals.length > 0) {
-                let allNames = new Set(Array.from(document.querySelectorAll('#shelf-items .font-bold.text-lg')).map(span => span.textContent.trim()));
-                let lastOriginal = originals[originals.length - 1];
+            if (originals.length === 0) return;
+            let lastOriginal = originals[originals.length - 1];
 
-                originals.forEach(original => {
-                    const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
-                    const hp = original.querySelector('.text-2xl.font-mono').textContent.trim();
-                    const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
-                    const backgroundColorClass = Array.from(original.classList).find(cls => colorPalette.includes(cls));
-                    
-                    let newName = originalName;
-                    let insertionPoint = lastOriginal;
-                    
-                    if (originalName !== '') {
-                        const getNextName = (currentName) => {
-                            const match = currentName.match(/(.+) (\d+)$/);
-                            return match ? `${match[1]} ${parseInt(match[2], 10) + 1}` : `${currentName} 2`;
-                        };
-                        let nextName = getNextName(originalName);
-                        while (allNames.has(nextName)) {
-                            nextName = getNextName(nextName);
-                        }
-                        newName = nextName;
-                        allNames.add(newName);
-
-                        const baseName = (originalName.match(/(.+) (\d+)$/) || [null, originalName])[1];
-                        const allSiblings = Array.from(document.querySelectorAll('#shelf-items .draggable')).filter(el => {
-                             const nameSpan = el.querySelector('.font-bold.text-lg');
-                             return nameSpan && nameSpan.textContent.trim().startsWith(baseName);
-                        });
-                        if (allSiblings.length > 0) {
-                            insertionPoint = allSiblings[allSiblings.length -1];
-                        }
-                    }
-                    
-                    const originalBgImage = original.style.backgroundImage;
-                    const originalIndexedDbImageId = original.dataset.indexedDbImageId || '';
-                    const options = { insertionElement: insertionPoint, backgroundColorClass: backgroundColorClass };
-                    if (originalIndexedDbImageId) {
-                        options.backgroundImage = `indexeddb://${originalIndexedDbImageId}`;
-                    } else if (originalBgImage && originalBgImage.startsWith('url(')) {
-                        options.backgroundImage = originalBgImage.substring(4, originalBgImage.length - 1).replace(/['"]/g, '');
-                    }
-                    createCharacter(newName, hp, statuses, options); 
-                    lastOriginal = insertionPoint.nextElementSibling;
-                });
-            }
+            originals.forEach(original => {
+                const name = original.querySelector('.font-bold.text-lg').textContent.trim();
+                const hp = original.querySelector('.text-2xl.font-mono').textContent.trim();
+                const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
+                const notes = original.dataset.notes || '';
+                const backgroundColorClass = Array.from(original.classList).find(cls => colorPalette.includes(cls));
+                const bgImageKey = original.dataset.bgImageKey || '';
+                const bgStyle = original.style.backgroundImage;
+                
+                let newName = name;
+                if (name !== '') {
+                    const match = name.match(/(.+) (\d+)$/);
+                    newName = match ? `${match[1]} ${parseInt(match[2], 10) + 1}` : `${name} 2`;
+                }
+                
+                const options = { 
+                    insertionElement: lastOriginal, 
+                    backgroundColorClass: backgroundColorClass,
+                    backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2) : '', // Extract URL
+                    bgImageKey: bgImageKey
+                };
+                const newChar = createCharacter(newName, hp, statuses, notes, options);
+                lastOriginal = newChar;
+            });
+            saveState();
         });
 
         clearStatusesButton.addEventListener('click', () => {
-             document.querySelectorAll('.highlighted').forEach(item => {
-                 const statusContainer = item.querySelector('.status-container');
-                 if(statusContainer) statusContainer.innerHTML = '';
-             });
-             saveStateToCookie(); 
+             document.querySelectorAll('.highlighted .status-container').forEach(c => c.innerHTML = '');
+             saveState(); 
         });
 
         clearAllDataButton.addEventListener('click', async () => { 
-            setCookie('initiativeTrackerState', '', -1); 
+            localStorage.clear();
             if (db) {
                 db.close();
-                db = null; 
-                console.log('IndexedDB connection closed.');
-            }
-            try {
+                db = null;
                 await new Promise((resolve, reject) => {
                     const req = indexedDB.deleteDatabase(DB_NAME);
-                    req.onsuccess = () => { console.log('IndexedDB database deleted successfully'); resolve(); };
-                    req.onblocked = () => { console.log('IndexDB deletion blocked') };
-                    req.onerror = (event) => { console.error('Error deleting IndexedDB database:', event.target.error); reject(event.target.error); };
+                    req.onsuccess = resolve;
+                    req.onerror = reject;
                 });
-            } catch (e) {
-                console.error("Failed to delete IndexedDB:", e);
             }
             shelf.innerHTML = ''; 
-            initializeApp()
+            initializeApp();
         });
-
 
         let isSelecting = false;
         let startX, startY;
         shelf.addEventListener('mousedown', (e) => {
-            if (e.target.closest('.draggable.highlighted') || e.target.closest('#turn-marker')) return; 
-            if (e.target.closest('.draggable')) {
-                return;
-            }
-
+            if (e.target.closest('.draggable')) return;
             e.preventDefault();
             isSelecting = true;
             startX = e.clientX; startY = e.clientY;
@@ -1057,9 +920,7 @@
             const left = Math.min(currentX, startX), top = Math.min(currentY, startY);
             Object.assign(selectionBox.style, { width: `${width}px`, height: `${height}px`, left: `${left}px`, top: `${top}px` });
             const boxRect = selectionBox.getBoundingClientRect();
-            document.querySelectorAll('.draggable').forEach(item => {
-                if (item.id === 'turn-marker') return;
-
+            document.querySelectorAll('.draggable.character-card').forEach(item => {
                 const itemRect = item.getBoundingClientRect();
                 const isIntersecting = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
                 if (isIntersecting) item.classList.add('highlighted');
@@ -1075,38 +936,43 @@
         });
         
         document.addEventListener('keydown', (event) => {
-            if (!contextMenu.classList.contains('hidden')) {
-                return;
-            }
-            if(event.key === 'Escape') {
-                if (!statusModal.classList.contains('hidden')) statusModal.classList.add('hidden');
-                else {
-                    document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
-                    updateActionButtonsState();
-                }
-                return;
-            }
+            const isNotesModalOpen = !notesModal.classList.contains('hidden');
+            const isStatusModalOpen = !statusModal.classList.contains('hidden');
+            const isContextMenuOpen = !contextMenu.classList.contains('hidden');
+            const activeElementIsEditable = document.activeElement.getAttribute('contenteditable') === 'true' || document.activeElement === imageUrlInput;
 
-            if (document.activeElement.getAttribute('contenteditable') === 'true' || 
-                document.activeElement === imageUrlInput) {
+            if (event.key === 'Escape') {
+                if (isNotesModalOpen) return closeNotesModal();
+                if (isStatusModalOpen) return statusModal.classList.add('hidden');
+                if (isContextMenuOpen) return contextMenu.classList.add('hidden');
+                document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
+                updateActionButtonsState();
                 return;
             }
             
-            if (!statusModal.classList.contains('hidden') && event.code.startsWith('Digit')) {
-                 event.preventDefault();
-                 const keyNumber = event.code === 'Digit0' ? 9 : parseInt(event.code.slice(-1)) - 1;
-                 const symbolButtons = symbolGrid.querySelectorAll('button');
-                 if (symbolButtons[keyNumber]) symbolButtons[keyNumber].click();
-                 return;
+            if (isNotesModalOpen && event.code === 'KeyN' && document.activeElement !== notesContentEditable) {
+                event.preventDefault();
+                return closeNotesModal();
             }
-
+            if (isNotesModalOpen || isContextMenuOpen || activeElementIsEditable) return;
+            
+            if (isStatusModalOpen) {
+                if (event.code.startsWith('Digit')) {
+                    event.preventDefault();
+                    const keyNumber = event.code === 'Digit0' ? 9 : parseInt(event.code.slice(-1)) - 1;
+                    if (symbolGrid.children[keyNumber]) symbolGrid.children[keyNumber].click();
+                }
+                return; 
+            }
+            
             switch (event.code) {
                 case 'Space': event.preventDefault(); moveButton.click(); break;
                 case 'Backspace': event.preventDefault(); lastTurnButton.click(); break;
                 case 'KeyA': event.preventDefault(); addButton.click(); break;
-                case 'KeyS': event.preventDefault(); handleStatusModalToggle(); break;
+                case 'KeyS': event.preventDefault(); if (!addStatusButton.disabled) handleStatusModalToggle(); break;
                 case 'KeyC': event.preventDefault(); if (!copyButton.disabled) copyButton.click(); break;
                 case 'KeyX': event.preventDefault(); if (!clearStatusesButton.disabled) clearStatusesButton.click(); break;
+                case 'KeyN': event.preventDefault(); if (!notesButton.disabled) openNotesModal(); break;
                 case 'Delete': event.preventDefault(); if (!removeButton.disabled) removeButton.click(); break;
             }
         });
@@ -1118,23 +984,22 @@
         });
 
         function initializeDefaultScene() {
+            const goblinImageUrl = 'https://www.dndbeyond.com/avatars/thumbnails/30783/955/1000/1000/638062024584880857.png';
+            const goblinNotes = `<p><strong>Goblin</strong><br><em>Small Humanoid (Goblinoid), Neutral Evil</em></p><hr><p><strong>Armor Class</strong> 15 (leather armor, shield)<br><strong>Hit Points</strong> 7 (2d6)<br><strong>Speed</strong> 30 ft.</p><hr><p><strong>STR</strong> 8 (-1) | <strong>DEX</strong> 14 (+2) | <strong>CON</strong> 10 (+0) | <strong>INT</strong> 10 (+0) | <strong>WIS</strong> 8 (-1) | <strong>CHA</strong> 8 (-1)</p><hr><p><strong>Skills</strong> Stealth +6<br><strong>Senses</strong> Darkvision 60 ft., Passive Perception 9<br><strong>Languages</strong> Common, Goblin<br><strong>Challenge</strong> 1/4 (50 XP) | <strong>Proficiency Bonus</strong> +2</p><hr><p><strong><em>Nimble Escape.</em></strong> The goblin can take the Disengage or Hide action as a bonus action on each of its turns.</p><p><strong>Actions</strong><br><strong><em>Scimitar.</em></strong> <em>Melee Weapon Attack:</em> +4 to hit, reach 5 ft., one target. <em>Hit:</em> 5 (1d6 + 2) slashing damage.<br><strong><em>Shortbow.</em></strong> <em>Ranged Weapon Attack:</em> +4 to hit, range 80/320 ft., one target. <em>Hit:</em> 5 (1d6 + 2) piercing damage.</p>`;
+
             createTurnMarker();
-            createCharacter('Goblin 1', 7);
-            createCharacter('Goblin 2', 7);
-            createCharacter('Goblin 3', 2, ['❤️‍🩹']);
-            createCharacter('Hector the Well-Endowed', 18, ['⚡️']);
+            const options = { bgImageKey: goblinImageUrl, backgroundImage: goblinImageUrl, backgroundColorClass: '' };
+            createCharacter('Goblin 1', 7, [], goblinNotes, options);
+            createCharacter('Goblin 2', 7, [], goblinNotes, options);
+            createCharacter('Goblin 3', 4, ['❤️‍🩹'], goblinNotes, options);
+            createCharacter('Hector the Well-Endowed', 18, ['⚡️'], '', {});
+            saveState(); // Perform initial save
         }
         
-        // --- Initial App Start ---
         async function initializeApp() {
             populateColorMenu();
-            try {
-                await openIndexedDB();
-                if (!await loadStateFromCookie()) {
-                    initializeDefaultScene();
-                }
-            } catch (e) {
-                console.error("Failed to initialize IndexedDB or load state:", e);
+            await openIndexedDB();
+            if (!await loadState()) {
                 initializeDefaultScene();
             }
         }
