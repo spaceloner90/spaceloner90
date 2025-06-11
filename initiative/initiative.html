@@ -120,35 +120,7 @@
         }
 
         /* Styles for the confirmation modal */
-        .confirm-modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.7);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 10000;
-        }
-
-        .confirm-modal-content {
-            background-color: white;
-            padding: 24px;
-            border-radius: 8px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-            text-align: center;
-            max-width: 400px;
-            width: 90%;
-        }
-
-        .confirm-modal-buttons {
-            margin-top: 20px;
-            display: flex;
-            justify-content: center;
-            gap: 16px;
-        }
+        /* REMOVED .confirm-modal-overlay, .confirm-modal-content, .confirm-modal-buttons */
     </style>
 </head>
 <body class="bg-gray-100">
@@ -243,17 +215,7 @@
         </div>
     </div>
 
-    <!-- Confirmation Modal for Clear All Data -->
-    <div id="confirm-clear-modal" class="confirm-modal-overlay hidden">
-        <div class="confirm-modal-content">
-            <p class="text-lg font-semibold text-gray-800 mb-4">Are you sure you want to clear ALL data?</p>
-            <p class="text-sm text-gray-600 mb-6">This will delete all characters, images, and saved state permanently.</p>
-            <div class="confirm-modal-buttons">
-                <button id="confirm-clear-cancel-btn" class="bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg hover:bg-gray-400 transition-all duration-200">Cancel</button>
-                <button id="confirm-clear-confirm-btn" class="bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition-all duration-200">Clear All</button>
-            </div>
-        </div>
-    </div>
+    <!-- Confirmation Modal for Clear All Data (REMOVED FROM HTML) -->
 
 
     <!-- JavaScript Logic -->
@@ -277,12 +239,6 @@
         const applyUrlButton = document.getElementById('apply-url-btn');
         const imageFileInput = document.getElementById('image-file-input');
         const clearAllDataButton = document.getElementById('clear-all-data-btn'); // New button reference
-
-        // Confirmation Modal elements
-        const confirmClearModal = document.getElementById('confirm-clear-modal');
-        const confirmClearCancelBtn = document.getElementById('confirm-clear-cancel-btn');
-        const confirmClearConfirmBtn = document.getElementById('confirm-clear-confirm-btn');
-
 
         // --- Data ---
         const colorPalette = [
@@ -1087,17 +1043,7 @@
         });
 
         // --- Clear All Data Logic ---
-        clearAllDataButton.addEventListener('click', () => {
-            confirmClearModal.classList.remove('hidden'); // Show confirmation modal
-        });
-
-        confirmClearCancelBtn.addEventListener('click', () => {
-            confirmClearModal.classList.add('hidden'); // Hide confirmation modal
-        });
-
-        confirmClearConfirmBtn.addEventListener('click', async () => {
-            confirmClearModal.classList.add('hidden'); // Hide confirmation modal immediately
-
+        clearAllDataButton.addEventListener('click', async () => { // Direct action now
             // Clear the cookie
             setCookie('initiativeTrackerState', '', -1); // Set expiration to past
 
@@ -1122,11 +1068,7 @@
             shelf.innerHTML = ''; // Clear existing elements from the display
             initializeDefaultScene(); // Re-initialize default characters
             updateActionButtonsState(); // Update button states
-            
-            // This location.reload() is primarily for when the user hosts the page in a browser
-            // that doesn't clear iframe history/state as aggressively as Canvas.
-            // For Canvas, the above DOM manipulation provides the immediate visual reset.
-            location.reload(); 
+
         });
 
 
@@ -1179,8 +1121,8 @@
         
         // --- Global Event Listeners to close popups ---
         document.addEventListener('keydown', (event) => {
-            // Disable keyboard shortcuts if context menu or confirmation modal is open
-            if (!contextMenu.classList.contains('hidden') || !confirmClearModal.classList.contains('hidden')) {
+            // Disable keyboard shortcuts if context menu is open
+            if (!contextMenu.classList.contains('hidden')) {
                 // Allow default behavior for typing into inputs within the context menu
                 return;
             }
@@ -1225,10 +1167,6 @@
             // Close context menu if click outside it and not on a draggable item (which has its own context menu handler)
             if (!contextMenu.classList.contains('hidden') && !contextMenu.contains(e.target) && !e.target.closest('.draggable')) {
                 contextMenu.classList.add('hidden');
-            }
-            // Close confirm modal if click outside it
-            if (!confirmClearModal.classList.contains('hidden') && !confirmClearModal.querySelector('.confirm-modal-content').contains(e.target)) {
-                confirmClearModal.classList.add('hidden');
             }
         });
 
