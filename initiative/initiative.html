@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-UTF-8">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Grid of Elements</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -248,7 +248,7 @@
         ];
         let colorIndex = 0; // To cycle through colors for new characters
         
-        const statusSymbols = ['☠️', '�', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
+        const statusSymbols = ['☠️', '🔥', '❄️', '⚡️', '🛡️', '⚔️', '❤️‍🩹', '😵', '🤢', '❓', '💪', '🎯'];
 
         // --- IndexedDB Setup ---
         let db;
@@ -543,37 +543,36 @@
             const resolveHp = () => {
                 const originalHp = parseInt(hpSpan.dataset.originalHp, 10);
                 const expression = hpSpan.textContent.trim();
-                if (isNaN(originalHp)) return;
+                if (isNaN(originalHp)) return; // Ensure original HP is a number
 
                 let newHp;
                 try {
-                    // Allow simple arithmetic operations like +5, -2, or just a number
-                    // Ensure the expression only contains numbers, +, -, and spaces
+                    // Sanitize the expression: allow digits, +, -, *, /, and spaces.
+                    // This is a simplified regex; for complex calculators, a full parser is needed.
                     const sanitizedExpression = expression.replace(/\s/g, ''); // Remove all spaces
-                    const validExpressionRegex = /^[0-9+\-]+$/; // Regex to validate only numbers, +, -
                     
-                    if (!validExpressionRegex.test(sanitizedExpression) && !/^\d+$/.test(sanitizedExpression)) {
-                         // If it's not a valid arithmetic expression or just a number, revert
-                         throw new Error("Invalid characters or format");
+                    // Allow basic arithmetic: digits, +, -, *, /
+                    // If you only want +, -, restrict this regex.
+                    const validCharsRegex = /^[\d+\-*/.]+$/; // Added / and . for decimals/division
+                    if (!validCharsRegex.test(sanitizedExpression)) {
+                        throw new Error("Invalid characters or format in HP expression.");
                     }
 
-                    // Check if it's an arithmetic operation
-                    if (sanitizedExpression.includes('+') || sanitizedExpression.includes('-')) {
-                        // Evaluate the arithmetic expression relative to original HP
-                        // Use a safe way to evaluate, avoiding `eval` for security
-                        const parts = sanitizedExpression.match(/([+\-]?\d+)/g);
-                        if (!parts) throw new Error("No numbers found in arithmetic expression");
-                        newHp = originalHp + parts.reduce((acc, part) => acc + parseInt(part), 0);
-                    } else {
-                        // If it's just a number, parse it directly
-                        newHp = parseInt(sanitizedExpression, 10);
+                    // Use the Function constructor for safe evaluation of simple arithmetic.
+                    // Wrap the expression in parentheses to ensure it's evaluated as a whole.
+                    // This is generally safer than 'eval()' because it runs in its own scope.
+                    newHp = new Function('return (' + sanitizedExpression + ')')();
+
+                    // Ensure newHp is a finite number
+                    if (!Number.isFinite(newHp)) {
+                        throw new Error("Invalid calculation result.");
                     }
 
                 } catch (error) {
                     console.error("HP calculation error:", error);
                     newHp = originalHp; // Revert to original HP on error
                 }
-                hpSpan.textContent = newHp;
+                hpSpan.textContent = Math.round(newHp); // Round to integer HP
                 saveStateToCookie(); // Save state after HP change
             };
             
@@ -1046,16 +1045,37 @@
         clearAllDataButton.addEventListener('click', async () => { // Direct action now
             // Clear the cookie
             setCookie('initiativeTrackerState', '', -1); // Set expiration to past
+            if (db) {
+                db.close();
+                db = null; // Clear the reference to the database object
+                console.log('IndexedDB connection closed.');
+            }
 
             // Delete the IndexedDB database
-            // Removed await Promise wrapper for direct call
-            indexedDB.deleteDatabase(DB_NAME);
-            console.log('IndexedDB deletion initiated (asynchronous).');
+            try {
+                await new Promise((resolve, reject) => {
+                    const req = indexedDB.deleteDatabase(DB_NAME);
+                    req.onsuccess = () => {
+                        console.log('IndexedDB database deleted successfully');
+                        resolve();
+                    };
+                    req.onblocked = () => {
+                        console.log('IndexDB deletion blocked')
+                    };
+                    req.onerror = (event) => {
+                        console.error('Error deleting IndexedDB database:', event.target.error);
+                        reject(event.target.error);
+                    };
+                });
+            } catch (e) {
+                console.error("Failed to delete IndexedDB:", e);
+            }
 
             // Perform a "soft reset" by clearing DOM and re-initializing default scene
             shelf.innerHTML = ''; // Clear existing elements from the display
             initializeDefaultScene(); // Re-initialize default characters
             updateActionButtonsState(); // Update button states
+
         });
 
 
