@@ -418,7 +418,7 @@
             <!-- NEW: Wrapper for input and button -->
             <div id="log-input-wrapper" class="flex">
                 <input type="text" id="log-input" class="flex-grow" placeholder="Type here and press Enter to log...">
-                <button id="d20-roll-btn" class="flex-shrink-0 bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 transition-colors">d20</button>
+                <button id="d20-roll-btn" class="flex-shrink-0 bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 transition-colors">d20 (R)</button>
             </div>
         </div>
     </div>
@@ -529,7 +529,7 @@
         let isLoading = false;
         let currentRollResult = 0;
         let rollStartTime;
-        const rollDuration = 2000; // Total duration of the roll in ms
+        const rollDuration = 1200; // Total duration of the roll in ms
         let sourceQuaternion, targetQuaternion;
         const d20Canvas = document.getElementById('d20-canvas');
         const d20ResultOverlay = document.getElementById('d20-result-overlay');
@@ -687,7 +687,7 @@
             // After a delay to show the result, hide the modal.
             setTimeout(() => {
                 diceModal.classList.add('invisible');
-            }, 1200);
+            }, 600);
         }
 
         function startLoadingAnimation() {
@@ -2157,6 +2157,14 @@
                 case 'KeyX': event.preventDefault(); if (!clearStatusesButton.disabled) clearStatusesButton.click(); break;
                 case 'KeyN': event.preventDefault(); if (!notesButton.disabled) openNotesModal(); break;
                 case 'Delete': event.preventDefault(); if (!removeButton.disabled) removeButton.click(); break;
+                case 'KeyR':
+                    event.preventDefault();
+                    rollD20();
+                    // If the log panel is closed, open it to show the result.
+                    if (!document.body.classList.contains('log-open')) {
+                        logHandle.click();
+                    }
+                    break;
             }
         });
 
