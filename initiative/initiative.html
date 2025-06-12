@@ -535,6 +535,9 @@
         const d20ResultOverlay = document.getElementById('d20-result-overlay');
         let d20FaceQuaternions; // Will be populated dynamically
 
+        let logInputHistory = [];
+        let logHistoryIndex = -1; // -1 represents the user's current (new) input
+
         function easeOutCubic(x) {
             return 1 - Math.pow(1 - x, 3);
         }
@@ -724,6 +727,38 @@
             // This acts as a "cancellation" flag for any pending animation frame.
             isLoading = false;
             diceModal.classList.add('invisible');
+        }
+
+        function parseAndRoll(diceString) {
+            // Make a copy of the original expression for the log output.
+            const originalExpression = diceString.trim();
+
+            try {
+                // First, find all dice terms (e.g., "1d20", "2d6") and replace them with their rolled result.
+                // The 'g' flag ensures we replace all occurrences.
+                const processedString = originalExpression.replace(/(\d+)d(\d+)/gi, (match, numDice, numSides) => {
+                    let sum = 0;
+                    for (let i = 0; i < parseInt(numDice, 10); i++) {
+                        sum += Math.floor(Math.random() * parseInt(numSides, 10)) + 1;
+                    }
+                    return sum;
+                });
+                
+                // At this point, "2d6+5" might have become "9+5".
+                // Now, we need to safely evaluate this mathematical expression.
+                // We sanitize it to prevent execution of malicious code.
+                const sanitizedString = processedString.replace(/[^-()\d/*+.]/g, '');
+
+                // Using new Function() is a safer alternative to eval().
+                const total = new Function('return ' + sanitizedString)();
+
+                // Return both the total and the original expression for logging.
+                return { total: Math.round(total), expression: originalExpression };
+                
+            } catch (e) {
+                console.error("Invalid dice roll expression:", e);
+                return null; // Return null if the expression is invalid.
+            }
         }
 
         // NEW: Helper function to programmatically add entries to the log
@@ -2061,10 +2096,85 @@
         
         // Event listener for the log input (refactored to use helper)
         logInput.addEventListener('keydown', (e) => {
+            const isHistoryNavigation = e.key === 'ArrowUp' || e.key === 'ArrowDown';
+
+            if (isHistoryNavigation) {
+                e.preventDefault();
+
+                if (e.key === 'ArrowUp') {
+                    // Move backwards in history (towards older entries)
+                    if (logHistoryIndex < logInputHistory.length - 1) {
+                        logHistoryIndex++;
+                    }
+                } else { // ArrowDown
+                    // Move forwards in history (towards newer entries)
+                    if (logHistoryIndex >= 0) {
+                        logHistoryIndex--;
+                    }
+                }
+
+                if (logHistoryIndex >= 0) {
+                    // If we are in the history, show the historical command
+                    // We reverse the index to show the most recent item first
+                    logInput.value = logInputHistory[logInputHistory.length - 1 - logHistoryIndex];
+                } else {
+                    // If we are at the "present", the input is blank
+                    logInput.value = '';
+                }
+                
+                // Move the cursor to the end of the input text
+                logInput.focus();
+                setTimeout(() => logInput.setSelectionRange(logInput.value.length, logInput.value.length), 0);
+                return; // Stop further processing for arrow keys
+            }
+
+            // If the user types any other key, reset their position in the history.
+            logHistoryIndex = -1;
+
             if (e.key === 'Enter' && logInput.value.trim() !== '') {
                 e.preventDefault();
-                addLogEntry(logInput.value.trim());
-                logInput.value = '';
+                const inputText = logInput.value.trim();
+
+                // --- NEW HISTORY LOGIC ---
+                // Check if we are currently viewing an unchanged command from history
+                const isResubmittingHistory = logHistoryIndex !== -1 && inputText === logInputHistory[logInputHistory.length - 1 - logHistoryIndex];
+
+                if (isResubmittingHistory) {
+                    // The user pressed enter on an old command without editing it.
+                    // We remove it from its old position and will add it back to the end.
+                    const originalIndex = logInputHistory.length - 1 - logHistoryIndex;
+                    logInputHistory.splice(originalIndex, 1);
+                }
+                
+                // Add the command to the end of the history.
+                // Avoid adding consecutive duplicates if the user spams Enter on the same new command.
+                if (inputText && logInputHistory[logInputHistory.length - 1] !== inputText) {
+                    logInputHistory.push(inputText);
+                }
+
+                // Ensure the history doesn't exceed 20 entries.
+                if (logInputHistory.length > 20) {
+                    logInputHistory.shift();
+                }
+                // --- END NEW HISTORY LOGIC ---
+
+                // Reset history navigation after submitting
+                logHistoryIndex = -1;
+
+                // --- This is the existing roll/log logic, it remains unchanged ---
+                if (inputText.toLowerCase().startsWith('/roll ')) {
+                    const diceExpression = inputText.substring(6).trim();
+                    const result = parseAndRoll(diceExpression);
+                    if (result !== null) {
+                        addLogEntry(`You rolled a ${result.total} (${result.expression})`);
+                    } else {
+                        addLogEntry(`Invalid roll command: /roll ${diceExpression}`);
+                    }
+                } else {
+                    addLogEntry(inputText);
+                }
+                
+                logInput.value = ''; // Clear input after processing
             }
         });
 
@@ -2194,7 +2304,7 @@
             createCharacter('Hector the Well-Endowed', 18, 18, ['⚡️'], '', hectorOptions, true);
             createCharacter('Goblin', 7, 7, [], goblinNotes, { ...goblinOptions, parent: compendiumShelfInner }, true);
             
-            logDisplay.innerHTML = `<div><span class="text-gray-400 mr-2">[11:46:00]</span> Welcome to the Initiative Tracker!</div>`;
+            logDisplay.innerHTML = `<div><span class="text-gray-400 mr-2">[11:46:00]</span> Welcome to the Initiative Tracker! (hint, try typing /roll 1d20)</div>`;
             
             // Perform one final save after creating all items
             await saveState();
