@@ -656,9 +656,9 @@
                     bgImageKey: data.bgImageKey
                 };
                 if (data.type === 'turnMarker') {
-                    createTurnMarker(id, data.turn); // Turn marker always goes to main shelf
+                    createTurnMarker(id, data.turn, skip_save=true); // Turn marker always goes to main shelf
                 } else { // It's a character
-                    createCharacter(data.name, data.hp, data.totalHp || data.hp, data.statuses, data.notes, options);
+                    createCharacter(data.name, data.hp, data.totalHp || data.hp, data.statuses, data.notes, options, skip_save=true);
                 }
             });
         }
@@ -1069,7 +1069,7 @@
         }
 
 
-        function createCharacter(name, hp, totalHp, statuses = [], notes = '', options = {}) {
+        function createCharacter(name, hp, totalHp, statuses = [], notes = '', options = {}, skip_save = false) {
             const {
                 id = null, insertionElement = null, backgroundColorClass = null,
                 backgroundImage = '', bgImageKey = '', parent = shelf,
@@ -1149,11 +1149,13 @@
             if (parent.id === 'compendium-shelf-inner') {
                 refreshCompendiumLayout();
             }
-            saveState(); // Ensure state is saved immediately after creating a character
+            if (!skip_save) {
+                saveState();
+            }
             return newItem;
         }
 
-        function createTurnMarker(id = null, turn = '1') {
+        function createTurnMarker(id = null, turn = '1', skip_save = false) {
             const turnMarker = document.createElement('div');
             turnMarker.id = id || `turn-marker-${crypto.randomUUID()}`;
             turnMarker.className = 'draggable flex items-end h-56';
@@ -1175,7 +1177,9 @@
             });
 
             shelf.appendChild(turnMarker);
-            saveState();
+            if (!skip_save) {
+                saveState();
+            }            
             return turnMarker; // Return the created turn marker
         }
 
