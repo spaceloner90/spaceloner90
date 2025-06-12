@@ -2268,6 +2268,10 @@
             const isContextMenuOpen = !contextMenu.classList.contains('invisible');
             const activeElementIsEditable = document.activeElement.getAttribute('contenteditable') === 'true' || ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
 
+            if (event.ctrlKey || event.metaKey || event.altKey) {
+                return;
+            }
+
             if (event.key === 'Escape') {
                 if (isNotesModalOpen) return closeNotesModal();
                 if (isStatusModalOpen) return statusModal.classList.add('invisible');
