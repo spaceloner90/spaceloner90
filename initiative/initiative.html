@@ -134,7 +134,7 @@
 
         /* --- Compendium & Main Wrapper Styles --- */
         #main-wrapper {
-            transition: padding-right 0.3s ease-in-out;
+            transition: padding-right 0.3s ease-in-out, padding-bottom 0.3s ease-in-out;
         }
         body.compendium-open #main-wrapper {
             padding-right: 260px;
@@ -198,6 +198,77 @@
             position: absolute;
             left: 50%;
             transition: top 0.3s ease-in-out, transform 0.3s ease-in-out;
+        }
+
+        /* --- NEW: Log Section Styles --- */
+        body.log-open #main-wrapper {
+            padding-bottom: 200px; /* Height of the log shelf */
+        }
+        #log-container {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: -200px; /* Start hidden (height of log-shelf) */
+            height: 240px; /* height of log-shelf + log-handle */
+            z-index: 30; /* Below compendium */
+            transition: bottom 0.3s ease-in-out;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        body.log-open #log-container {
+            bottom: 0;
+        }
+        #log-handle {
+            width: 160px;
+            height: 40px;
+            background-color: #374151; /* gray-700 */
+            border-top-left-radius: 1rem;
+            border-top-right-radius: 1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 -4px 6px -1px rgba(0,0,0,0.1);
+        }
+        #log-handle span {
+            color: white;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        #log-shelf {
+            width: 100%;
+            height: 200px;
+            background-color: #1f2937; /* gray-800 */
+            border-top: 1px solid #4b5563; /* gray-600 */
+            display: flex;
+            flex-direction: column;
+        }
+        #log-display {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            color: white;
+            font-family: monospace, monospace;
+            font-size: 0.875rem; /* text-sm */
+            scroll-behavior: smooth;
+        }
+        #log-display::-webkit-scrollbar { width: 8px; }
+        #log-display::-webkit-scrollbar-track { background: #1f2937; /* gray-800 */ }
+        #log-display::-webkit-scrollbar-thumb { background: #4b5563; /* gray-600 */ border-radius: 4px; }
+        #log-input {
+            flex-shrink: 0;
+            width: 100%;
+            background-color: #374151; /* gray-700 */
+            color: white;
+            font-family: monospace, monospace;
+            padding: 0.75rem 1rem;
+            border-top: 1px solid #4b5563; /* gray-600 */
+            outline: none;
+        }
+        #log-input:focus {
+             box-shadow: inset 0 0 0 2px #3b82f6; /* blue-500 ring */
         }
 
     </style>
@@ -308,6 +379,18 @@
         </div>
     </div>
 
+    <!-- NEW: Log Section HTML -->
+    <div id="log-container">
+        <div id="log-handle">
+            <span>Log</span>
+        </div>
+        <div id="log-shelf">
+            <div id="log-display">
+                <!-- Log entries will be populated here -->
+            </div>
+            <input type="text" id="log-input" placeholder="Type here and press Enter to log...">
+        </div>
+    </div>
 
     <!-- Status Symbol Modal -->
     <div id="status-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -386,6 +469,10 @@
         // Get references to the DND 5e and PF2e buttons
         const dnd5eImportBtn = document.getElementById('dnd5e-import-btn');
         const pf2eImportBtn = document.getElementById('pf2e-import-btn');
+        // NEW: Get references to log elements
+        const logHandle = document.getElementById('log-handle');
+        const logDisplay = document.getElementById('log-display');
+        const logInput = document.getElementById('log-input');
 
 
         // --- Data ---
@@ -574,6 +661,9 @@
                 const compendiumOrder = Array.from(compendiumShelfInner.children).map(item => item.id);
                 localStorage.setItem('compendiumOrder', JSON.stringify(compendiumOrder));
 
+                localStorage.setItem('isLogOpen', document.body.classList.contains('log-open'));
+                localStorage.setItem('logContent', logDisplay.innerHTML);
+
                 // Save individual character data to IndexedDB
                 const allCharacters = document.querySelectorAll('.character-card');
                 allCharacters.forEach(item => {
@@ -677,6 +767,17 @@
                     hideHpButton.textContent = 'Show HP';
                     hideHpButton.classList.remove('bg-gray-600', 'hover:bg-gray-700');
                     hideHpButton.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+                }
+
+                // NEW: Load log content and state
+                const savedLogContent = localStorage.getItem('logContent');
+                if (savedLogContent) {
+                    logDisplay.innerHTML = savedLogContent;
+                    logDisplay.scrollTop = logDisplay.scrollHeight;
+                }
+                const isLogOpen = JSON.parse(localStorage.getItem('isLogOpen')) || false;
+                if (isLogOpen) {
+                    document.body.classList.add('log-open');
                 }
 
                 console.log('State loaded from IndexedDB and localStorage.');
@@ -1666,6 +1767,7 @@
             }
             shelf.innerHTML = '';
             compendiumShelfInner.innerHTML = '';
+            logDisplay.innerHTML = '';
             await initializeApp(); // Re-initialize the app to default state
         });
 
@@ -1688,10 +1790,38 @@
             }
         });
 
+        // NEW: Log Handle listener
+        logHandle.addEventListener('click', () => {
+            document.body.classList.toggle('log-open');
+            saveState(); // Save the new open/closed state
+        });
+        
+        // NEW: Event listener for the log input
+        logInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && logInput.value.trim() !== '') {
+                e.preventDefault();
+                const logEntry = document.createElement('div');
+                const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                // Sanitize input to prevent HTML injection
+                const sanitizedText = logInput.value.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                logEntry.innerHTML = `<span class="text-gray-400 mr-2">[${timestamp}]</span> ${sanitizedText}`;
+                logDisplay.appendChild(logEntry);
+
+                // NEW: Trim the log to the latest 100 entries
+                while (logDisplay.children.length > 100) {
+                    logDisplay.removeChild(logDisplay.firstChild);
+                }
+
+                logDisplay.scrollTop = logDisplay.scrollHeight;
+                logInput.value = '';
+                saveState();
+            }
+        });
+
         let isSelecting = false;
         let startX, startY;
         document.body.addEventListener('mousedown', (e) => {
-            if (e.target.closest('.draggable, #compendium-container, #status-modal, #notes-modal, #context-menu, #main-button-container, #compendium-data-modal')) return;
+            if (e.target.closest('.draggable, #compendium-container, #status-modal, #notes-modal, #context-menu, #main-button-container, #compendium-data-modal, #log-container')) return;
             e.preventDefault();
             isSelecting = true;
             startX = e.clientX; startY = e.clientY;
@@ -1728,7 +1858,7 @@
             const isNotesModalOpen = !notesModal.classList.contains('hidden');
             const isStatusModalOpen = !statusModal.classList.contains('hidden');
             const isContextMenuOpen = !contextMenu.classList.contains('hidden');
-            const activeElementIsEditable = document.activeElement.getAttribute('contenteditable') === 'true' || document.activeElement === imageUrlInput || document.activeElement === compendiumSearch || document.activeElement === compendiumDataTextarea;
+            const activeElementIsEditable = document.activeElement.getAttribute('contenteditable') === 'true' || ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
 
             if (event.key === 'Escape') {
                 if (isNotesModalOpen) return closeNotesModal();
@@ -1802,6 +1932,7 @@
 
             // Add a goblin template to the compendium
             createCharacter('Goblin', 7, 7, [], goblinNotes, { ...goblinOptions, parent: compendiumShelfInner });
+            logDisplay.innerHTML = `<div><span class="text-gray-400 mr-2">[11:46:00]</span> Welcome to the Initiative Tracker!</div>`;
 
         }
 
