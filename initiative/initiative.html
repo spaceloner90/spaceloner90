@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Initiatve Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap">
     <style>
         /* Apply border-box sizing to all elements for more predictable layouts */
@@ -257,20 +258,37 @@
         #log-display::-webkit-scrollbar { width: 8px; }
         #log-display::-webkit-scrollbar-track { background: #1f2937; /* gray-800 */ }
         #log-display::-webkit-scrollbar-thumb { background: #4b5563; /* gray-600 */ border-radius: 4px; }
+        #log-input-wrapper {
+            border-top: 1px solid #4b5563; /* gray-600 */
+        }
         #log-input {
-            flex-shrink: 0;
             width: 100%;
             background-color: #374151; /* gray-700 */
             color: white;
             font-family: monospace, monospace;
             padding: 0.75rem 1rem;
-            border-top: 1px solid #4b5563; /* gray-600 */
             outline: none;
+            border: none; /* Remove border from input itself */
         }
         #log-input:focus {
              box-shadow: inset 0 0 0 2px #3b82f6; /* blue-500 ring */
         }
 
+        /* --- Animation for the dice result text --- */
+        @keyframes reveal-result-text {
+            from {
+                transform: scale(0.5);
+                opacity: 0;
+            }
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .result-reveal-animation {
+            animation: reveal-result-text 0.3s ease-out forwards;
+        }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -388,7 +406,11 @@
             <div id="log-display">
                 <!-- Log entries will be populated here -->
             </div>
-            <input type="text" id="log-input" placeholder="Type here and press Enter to log...">
+            <!-- NEW: Wrapper for input and button -->
+            <div id="log-input-wrapper" class="flex">
+                <input type="text" id="log-input" class="flex-grow" placeholder="Type here and press Enter to log...">
+                <button id="d20-roll-btn" class="flex-shrink-0 bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 transition-colors">d20</button>
+            </div>
         </div>
     </div>
 
@@ -426,6 +448,17 @@
                 <button id="close-compendium-data-modal-btn" class="bg-green-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-green-600 focus:outline-none">Done</button>
             </div>
             <textarea id="compendium-data-textarea" class="flex-grow w-full p-2 border border-gray-300 rounded-md bg-gray-50 font-mono text-sm"></textarea>
+        </div>
+    </div>
+
+    <!-- D20 Dice Roll Modal -->
+    <div id="dice-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <!-- Container for both the canvas and the text overlay -->
+        <div id="d20-container" class="relative w-48 h-48">
+            <canvas id="d20-canvas" class="absolute inset-0 w-full h-full"></canvas>
+            <div id="d20-result-overlay" class="w-full h-full flex items-center justify-center text-white text-6xl font-bold text-readable pointer-events-none">
+                <!-- The result will be shown here -->
+            </div>
         </div>
     </div>
 
@@ -473,6 +506,188 @@
         const logHandle = document.getElementById('log-handle');
         const logDisplay = document.getElementById('log-display');
         const logInput = document.getElementById('log-input');
+        const d20RollBtn = document.getElementById('d20-roll-btn');
+
+        // --- Dice Rolling Logic ---
+
+        // Get references to the dice modal elements
+        const diceModal = document.getElementById('dice-modal');
+
+        /**
+         * Simulates a D20 roll with animation.
+         * @param {number} duration - How long the rolling animation should last in milliseconds.
+         */
+        function rollD20() {
+            diceModal.classList.remove('hidden');
+
+            if (!scene) init3DDice();
+
+            // Always resize renderer and camera when modal becomes visible
+            const width = d20Canvas.clientWidth;
+            const height = d20Canvas.clientHeight;
+            if (renderer && camera) {
+                renderer.setSize(width, height);
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+            }
+
+            d20ResultOverlay.textContent = '';
+            d20ResultOverlay.classList.remove('result-reveal-animation');
+
+            // --- Set up the new animation ---
+            
+            // 1. Pick a final result and its corresponding rotation
+            const finalResult = Math.floor(Math.random() * 20) + 1;
+            targetQuaternion = d20FaceQuaternions[finalResult - 1];
+
+            // 2. Create a random, distant starting rotation
+            sourceQuaternion = new THREE.Quaternion();
+            const randomAxis = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+            const randomAngle = Math.random() * 100 + 50
+            sourceQuaternion.setFromAxisAngle(randomAxis, randomAngle);
+
+            // 3. Set the die to its starting rotation and kick off the animation
+            die.quaternion.copy(sourceQuaternion);
+            isRolling = true;
+            rollStartTime = Date.now();
+            animate3DDice();
+
+            // After the roll duration, show the result text
+            setTimeout(() => {
+                d20ResultOverlay.textContent = finalResult;
+                d20ResultOverlay.classList.add('result-reveal-animation');
+                addLogEntry(`You rolled a ${finalResult} on a d20`);
+
+                // After another delay, hide the modal
+                setTimeout(() => {
+                    diceModal.classList.add('hidden');
+                }, 1200);
+
+            }, rollDuration); // This timeout matches the roll animation's duration
+        }
+
+        // --- Three.js Dice Setup ---
+        let scene, camera, renderer, die;
+        // NEW: Simplified variables for the dice animation
+        let isRolling = false;
+        let rollStartTime;
+        const rollDuration = 2000; // Total duration of the roll in ms
+        let sourceQuaternion, targetQuaternion;
+        const d20Canvas = document.getElementById('d20-canvas');
+        const d20ResultOverlay = document.getElementById('d20-result-overlay');
+        let d20FaceQuaternions; // Will be populated dynamically
+
+        function easeOutCubic(x) {
+            return 1 - Math.pow(1 - x, 3);
+        }
+
+        function generateFaceQuaternions(geometry) {
+            const faceQuaternions = [];
+            const targetVector = new THREE.Vector3(0, 0, 1); // We want the face normal to point to the camera
+
+            const positionAttribute = geometry.getAttribute('position');
+            const vertices = [];
+            for (let i = 0; i < positionAttribute.count; i++) {
+                const vertex = new THREE.Vector3();
+                vertex.fromBufferAttribute(positionAttribute, i);
+                vertices.push(vertex);
+            }
+            
+            // An icosahedron has 20 faces, each defined by 3 vertices.
+            for (let i = 0; i < vertices.length; i += 3) {
+                const v1 = vertices[i];
+                const v2 = vertices[i+1];
+                const v3 = vertices[i+2];
+
+                // Calculate the normal vector for the face
+                const face = new THREE.Plane().setFromCoplanarPoints(v1, v2, v3);
+                const normal = face.normal;
+                
+                // Calculate the quaternion that rotates the face's normal to our target vector
+                const quaternion = new THREE.Quaternion().setFromUnitVectors(normal, targetVector);
+                faceQuaternions.push(quaternion);
+            }
+            return faceQuaternions;
+        }
+
+        function init3DDice() {
+            // 1. Scene
+            scene = new THREE.Scene();
+
+            // 2. Camera
+            camera = new THREE.PerspectiveCamera(75, d20Canvas.clientWidth / d20Canvas.clientHeight, 0.1, 1000);
+            camera.position.z = 1.7; // Smaller = closer = bigger
+
+            // 3. Renderer
+            renderer = new THREE.WebGLRenderer({ canvas: d20Canvas, alpha: true }); // alpha:true makes background transparent
+            renderer.setSize(d20Canvas.clientWidth, d20Canvas.clientHeight);
+
+            // 4. Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const pointLight = new THREE.PointLight(0xffffff, 0.9);
+            pointLight.position.set(2, 3, 4);
+            scene.add(pointLight);
+
+            // 5. Create the Die (Icosahedron for a D20)
+            const geometry = new THREE.IcosahedronGeometry(1, 0); // detail 0 = sharp edges
+            d20FaceQuaternions = generateFaceQuaternions(geometry);
+            
+            // NEW: Use a more realistic material
+            const material = new THREE.MeshStandardMaterial({
+                color: 0x6366f1, // Corresponds to Tailwind's indigo-500
+                roughness: 0.4,
+                metalness: 0.2
+            });
+            die = new THREE.Mesh(geometry, material);
+            scene.add(die);
+
+            // NEW: Add edges for a clearer shape
+            const edges = new THREE.EdgesGeometry(geometry);
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+            const wireframe = new THREE.LineSegments(edges, lineMaterial);
+            die.add(wireframe); // The wireframe will now rotate with the die
+        }
+
+        function animate3DDice() {
+            if (!isRolling) return; // Stop the loop if not rolling
+
+            requestAnimationFrame(animate3DDice);
+
+            const elapsedTime = Date.now() - rollStartTime;
+            let progress = elapsedTime / rollDuration;
+            
+            if (progress >= 1) {
+                progress = 1;
+                isRolling = false; // End the roll
+            }
+            
+            // Apply the easing function to make the roll slow down
+            const easedProgress = easeOutCubic(progress);
+
+            // Animate from the source to the target rotation
+            THREE.Quaternion.slerp(sourceQuaternion, targetQuaternion, die.quaternion, easedProgress);
+
+            renderer.render(scene, camera);
+        }
+
+        // NEW: Helper function to programmatically add entries to the log
+        function addLogEntry(text) {
+            const logEntry = document.createElement('div');
+            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            // Sanitize text to prevent HTML injection
+            const sanitizedText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            logEntry.innerHTML = `<span class="text-gray-400 mr-2">[${timestamp}]</span> ${sanitizedText}`;
+            logDisplay.appendChild(logEntry);
+
+            // Trim the log to the latest 100 entries
+            while (logDisplay.children.length > 100) {
+                logDisplay.removeChild(logDisplay.firstChild);
+            }
+
+            logDisplay.scrollTop = logDisplay.scrollHeight;
+            saveState(); // Save state every time an entry is added
+        }
 
 
         // --- Data ---
@@ -1796,27 +2011,16 @@
             saveState(); // Save the new open/closed state
         });
         
-        // NEW: Event listener for the log input
+        // Event listener for the log input (refactored to use helper)
         logInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && logInput.value.trim() !== '') {
                 e.preventDefault();
-                const logEntry = document.createElement('div');
-                const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                // Sanitize input to prevent HTML injection
-                const sanitizedText = logInput.value.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                logEntry.innerHTML = `<span class="text-gray-400 mr-2">[${timestamp}]</span> ${sanitizedText}`;
-                logDisplay.appendChild(logEntry);
-
-                // NEW: Trim the log to the latest 100 entries
-                while (logDisplay.children.length > 100) {
-                    logDisplay.removeChild(logDisplay.firstChild);
-                }
-
-                logDisplay.scrollTop = logDisplay.scrollHeight;
+                addLogEntry(logInput.value.trim());
                 logInput.value = '';
-                saveState();
             }
         });
+
+        d20RollBtn.addEventListener('click', () => rollD20());
 
         let isSelecting = false;
         let startX, startY;
