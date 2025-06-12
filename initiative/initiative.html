@@ -127,16 +127,23 @@
         }
 
         /* Styles for the Notes Modal's rich text editor */
-        #notes-content-editable:focus {
+        #notes-edit-content:focus {
             outline: 2px solid #3b82f6; /* Blue outline on focus */
         }
-        #notes-content-editable ul {
+        #notes-edit-content ul {
             list-style: disc;
             margin-left: 20px;
         }
-        #notes-content-editable ol {
+        #notes-edit-content ol {
             list-style: decimal;
             margin-left: 20px;
+        }
+        /* When in edit mode, hide the view div and show the textarea */
+        #notes-modal.edit-mode #notes-view-content {
+            display: none;
+        }
+        #notes-modal.edit-mode #notes-edit-content {
+            display: block;
         }
 
         .clickable-roll {
@@ -451,11 +458,19 @@
         <div class="bg-white rounded-lg shadow-2xl p-6 w-full max-w-2xl h-full max-h-[80vh] flex flex-col">
             <div class="flex justify-between items-center mb-4 flex-shrink-0">
                 <h2 id="notes-title" class="text-xl font-bold text-gray-800">Notes for...</h2>
-                <button id="close-notes-modal-btn" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-red-600 focus:outline-none">Close</button>
+                <div> <!-- Wrapper for buttons -->
+                    <button id="notes-toggle-edit-btn" class="bg-blue-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-blue-600 focus:outline-none">Edit</button>
+                    <button id="close-notes-modal-btn" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-red-600 focus:outline-none ml-2">Close</button>
+                </div>
             </div>
-            <div id="notes-content-editable" contenteditable="true" class="flex-grow overflow-y-auto p-4 border border-gray-300 rounded-md bg-gray-50">
-                <!-- Rich text content goes here -->
+            
+            <!-- NEW: View Mode Container -->
+            <div id="notes-view-content" class="flex-grow overflow-y-auto p-4 border border-gray-300 rounded-md bg-gray-50">
+                <!-- Processed, clickable content goes here -->
             </div>
+
+            <!-- NEW: Edit Mode Container (hidden by default) -->
+            <div id="notes-edit-content" contenteditable="true" class="hidden flex-grow w-full p-2 border border-gray-300 rounded-md bg-white overflow-y-auto focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
         </div>
     </div>
 
@@ -508,6 +523,7 @@
         const clearAllDataButton = document.getElementById('clear-all-data-btn');
         const notesButton = document.getElementById('notes-btn');
         const notesModal = document.getElementById('notes-modal');
+        const notesToggleEditBtn = document.getElementById('notes-toggle-edit-btn');
         const closeNotesModalButton = document.getElementById('close-notes-modal-btn');
         const notesTitle = document.getElementById('notes-title');
         const notesContentEditable = document.getElementById('notes-content-editable');
@@ -1673,30 +1689,31 @@
             notesTitle.textContent = `Notes for ${name}`;
             if (selectedItems.length > 1) notesTitle.textContent += ` (+${selectedItems.length - 1} others)`;
 
-            // Get the raw notes HTML from the character data
+            // Get the raw, clean notes HTML from the character data
             const rawNotes = firstItem.dataset.notes || '';
             
-            // NEW: Process the raw notes to make dice strings clickable
+            // 1. Put the clickable version in the view pane
             const processedNotes = makeDiceRollsClickable(rawNotes);
-            
-            // Set the content of the editor to the new, processed HTML
-            notesContentEditable.innerHTML = processedNotes;
+            document.getElementById('notes-view-content').innerHTML = processedNotes;
+
+            // 2. Put the raw HTML in the edit pane (a contenteditable div now)
+            document.getElementById('notes-edit-content').innerHTML = rawNotes;
+
+            // 3. Set to view mode by default
+            notesModal.classList.remove('edit-mode');
+            notesToggleEditBtn.textContent = 'Edit';
 
             notesModal.classList.remove('invisible');
         }
 
         function closeNotesModal() {
-            const newNotes = notesContentEditable.innerHTML;
-            document.querySelectorAll('.highlighted').forEach(item => {
-                item.dataset.notes = newNotes;
-                updateNotesIndicator(item);
-            });
+            // This function should NOT save. Saving is handled explicitly by the Edit/Save button.
+            // It should just hide the modal, discarding any unsaved changes if in edit mode.
             notesModal.classList.add('invisible');
-            saveState();
         }
 
         notesButton.addEventListener('click', openNotesModal);
-        notesContentEditable.addEventListener('click', (e) => {
+        document.getElementById('notes-view-content').addEventListener('click', (e) => {
             // Check if the user clicked on a span with our special class
             if (e.target.classList.contains('clickable-roll')) {
                 const diceExpression = e.target.textContent;
@@ -1714,8 +1731,42 @@
             }
         });
         closeNotesModalButton.addEventListener('click', closeNotesModal);
+        notesToggleEditBtn.addEventListener('click', () => {
+            const isInEditMode = notesModal.classList.contains('edit-mode');
+
+            if (isInEditMode) {
+                // --- We are clicking "Save" ---
+                // THE FIX IS HERE: Use .innerHTML for a contenteditable div.
+                const rawNotes = document.getElementById('notes-edit-content').innerHTML;
+
+                // Update the view pane with the new, processed content
+                const processedNotes = makeDiceRollsClickable(rawNotes);
+                document.getElementById('notes-view-content').innerHTML = processedNotes;
+
+                // Save the raw, clean HTML to the dataset for each selected character
+                document.querySelectorAll('.highlighted').forEach(item => {
+                    item.dataset.notes = rawNotes;
+                    updateNotesIndicator(item); // Update the 📝 indicator
+                });
+
+                saveState(); // Persist the changes
+
+                // Switch back to view mode
+                notesModal.classList.remove('edit-mode');
+                notesToggleEditBtn.textContent = 'Edit';
+
+            } else {
+                // --- We are clicking "Edit" ---
+                // Switch to edit mode
+                notesModal.classList.add('edit-mode');
+                notesToggleEditBtn.textContent = 'Save';
+            }
+        });
         addStatusButton.addEventListener('click', handleStatusModalToggle);
-        closeModalButton.addEventListener('click', () => statusModal.classList.add('invisible'));
+        closeNotesModalButton.addEventListener('click', () => {
+            // Note: We could add a check here for unsaved changes later if needed.
+            notesModal.classList.add('invisible');
+        });
         statusModal.addEventListener('click', (e) => { if (e.target === statusModal) statusModal.classList.add('invisible'); });
 
         applyUrlButton.addEventListener('click', () => {
@@ -2292,7 +2343,7 @@
                 return; // Stop processing other keys if the status modal is open
             }
 
-            if (isNotesModalOpen && event.code === 'KeyN' && document.activeElement !== notesContentEditable) {
+            if (isNotesModalOpen && event.code === 'KeyN' && document.activeElement !== document.getElementById('notes-edit-content')) {
                 event.preventDefault();
                 return closeNotesModal();
             }
