@@ -139,6 +139,16 @@
             margin-left: 20px;
         }
 
+        .clickable-roll {
+            color: #60a5fa; /* Tailwind's blue-400 */
+            text-decoration: underline;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .clickable-roll:hover {
+            color: #3b82f6; /* Tailwind's blue-500 */
+        }
+
         /* --- Compendium & Main Wrapper Styles --- */
         #main-wrapper {
             transition: padding-right 0.3s ease-in-out, padding-bottom 0.3s ease-in-out;
@@ -1643,6 +1653,17 @@
             if (indicator) indicator.style.display = item.dataset.notes ? 'block' : 'none';
         }
 
+        function makeDiceRollsClickable(htmlString) {
+            // This regex finds dice notation like "1d20", "2d6+5", or "1d8 - 2".
+            // It looks for a number, 'd', a number, and then an optional +/- modifier.
+            const rollRegex = /\b(\d+d\d+(\s*[+-]\s*\d+)?)\b/gi;
+            
+            return htmlString.replace(rollRegex, (match) => {
+                const cleanMatch = match.replace(/\s/g, ''); // Remove whitespace for the roll parser
+                return `<span class="clickable-roll" title="Click to roll ${cleanMatch}">${match}</span>`;
+            });
+        }
+
         function openNotesModal() {
             const selectedItems = document.querySelectorAll('.highlighted');
             if (selectedItems.length === 0) return;
@@ -1652,7 +1673,15 @@
             notesTitle.textContent = `Notes for ${name}`;
             if (selectedItems.length > 1) notesTitle.textContent += ` (+${selectedItems.length - 1} others)`;
 
-            notesContentEditable.innerHTML = firstItem.dataset.notes || '';
+            // Get the raw notes HTML from the character data
+            const rawNotes = firstItem.dataset.notes || '';
+            
+            // NEW: Process the raw notes to make dice strings clickable
+            const processedNotes = makeDiceRollsClickable(rawNotes);
+            
+            // Set the content of the editor to the new, processed HTML
+            notesContentEditable.innerHTML = processedNotes;
+
             notesModal.classList.remove('invisible');
         }
 
@@ -1667,6 +1696,23 @@
         }
 
         notesButton.addEventListener('click', openNotesModal);
+        notesContentEditable.addEventListener('click', (e) => {
+            // Check if the user clicked on a span with our special class
+            if (e.target.classList.contains('clickable-roll')) {
+                const diceExpression = e.target.textContent;
+                const result = parseAndRoll(diceExpression);
+
+                if (result !== null) {
+                    // Log the result in a clear format
+                    addLogEntry(`Rolled ${result.expression}: ${result.total}`);
+
+                    // If the log panel is closed, open it to show the result.
+                    if (!document.body.classList.contains('log-open')) {
+                        logHandle.click();
+                    }
+                }
+            }
+        });
         closeNotesModalButton.addEventListener('click', closeNotesModal);
         addStatusButton.addEventListener('click', handleStatusModalToggle);
         closeModalButton.addEventListener('click', () => statusModal.classList.add('invisible'));
