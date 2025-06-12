@@ -776,10 +776,9 @@
                     // The 'item' that was dragged is automatically re-inserted by the browser,
                     // we remove it to keep the compendium tidy and insert the new copy.
                     // This creates a "copy on drag" behavior.
-                    if (originalParentId === 'compendium-shelf-inner' && newParent.id === 'shelf-items') {
-                        // The dragged item is already where it should be after drop, remove the original from compendium
-                        // and then recreate the original in the compendium. This effectively "copies" the item.
-                        const droppedCompendiumItem = document.getElementById(item.id); // This is the actual element that was moved to the shelf
+                    if (originalParentId != newParent.id) {
+                        // The dragged item is already where it should be after drop, remove the original
+                        // and then recreate the original. This effectively "copies" the item.
                         
                         const tempId = item.id; // Store original ID before it changes
                         const tempOriginalParent = document.getElementById(originalParentId);
@@ -788,7 +787,7 @@
                         // The item 'item' is now on the shelf. Give it a new ID.
                         item.id = `char-${crypto.randomUUID()}`;
                         
-                        // Recreate the original item in the compendium at its original position
+                        // Recreate the original item at its original position
                         createCharacter(
                             originalItemData.name,
                             originalItemData.hp,
