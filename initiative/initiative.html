@@ -1803,7 +1803,7 @@
 
                 if (result !== null) {
                     // THE FIX: Use the same rich HTML formatting as the /roll command.
-                    const finalLogMessage = `Rolled <strong><span class="math-inline">\{result\.expression\}</strong\> &rarr; <strong class\="text\-xl text\-yellow\-300"\></span>{result.total}</strong>` + 
+                    const finalLogMessage = `Rolled <strong><span class="math-inline">${result.expression}</strong\> &rarr; <strong class\="text\-xl text\-yellow\-300"\></span>${result.total}</strong>` + 
                                         (result.breakdown ? `<br><span class="text-gray-400 text-xs">${result.breakdown}</span>` : '');
                     addLogEntry(finalLogMessage, true);
 
