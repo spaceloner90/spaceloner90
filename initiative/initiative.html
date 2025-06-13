@@ -753,44 +753,98 @@
         }
 
         function parseAndRoll(diceString) {
-            // Make a copy of the original expression for the log output.
             const originalExpression = diceString.trim();
+            // This regex captures the number of dice, sides, and the keep modifier (e.g., kh1)
+            const diceRollRegex = /(\d+)d(\d+)((?:kh|kl)\d+)?/gi;
+            let errorFromReplace = null; // Used to catch errors from inside the .replace() callback
 
             try {
-                // First, find all dice terms (e.g., "1d20", "2d6") and replace them with their rolled result.
-                // The 'g' flag ensures we replace all occurrences.
-                const processedString = originalExpression.replace(/(\d+)d(\d+)/gi, (match, numDice, numSides) => {
-                    let sum = 0;
-                    for (let i = 0; i < parseInt(numDice, 10); i++) {
-                        sum += Math.floor(Math.random() * parseInt(numSides, 10)) + 1;
+                let rollDetails = []; // To store breakdown text like "Rolls: [18, 5], Kept: [18]"
+
+                const processedString = originalExpression.replace(diceRollRegex, (match, numDiceStr, numSidesStr, keepModifier) => {
+                    if (errorFromReplace) return ''; // Stop if an error was already found
+
+                    const numDice = parseInt(numDiceStr, 10);
+                    const numSides = parseInt(numSidesStr, 10);
+                    let rolls = [];
+
+                    for (let i = 0; i < numDice; i++) {
+                        rolls.push(Math.floor(Math.random() * numSides) + 1);
                     }
+
+                    let keptRolls = [...rolls];
+                    let wasModified = false;
+
+                    if (keepModifier) {
+                        const keepType = keepModifier.slice(0, 2).toLowerCase();
+                        const numToKeep = parseInt(keepModifier.slice(2), 10);
+
+                        if (isNaN(numToKeep) || numToKeep <= 0) {
+                            errorFromReplace = new Error(`Invalid number to keep in "${match}".`);
+                            return '';
+                        }
+                        if (numToKeep > numDice) {
+                            errorFromReplace = new Error(`Cannot keep ${numToKeep} dice; only <span class="math-inline">\{numDice\} were rolled in "</span>{match}".`);
+                            return '';
+                        }
+
+                        wasModified = true;
+                        rolls.sort((a, b) => a - b); // Sort numerically
+                        if (keepType === 'kh') {
+                            keptRolls = rolls.slice(-numToKeep); // Get the highest rolls from the end
+                        } else { // 'kl'
+                            keptRolls = rolls.slice(0, numToKeep); // Get the lowest rolls from the start
+                        }
+                    }
+
+                    const sum = keptRolls.reduce((a, b) => a + b, 0);
+
+                    let detail = `Rolls: [${rolls.join(', ')}]`;
+                    if (wasModified) {
+                        detail += `, Kept: [${keptRolls.join(', ')}]`;
+                    }
+                    rollDetails.push(`${match}: ${detail}`);
+
                     return sum;
                 });
-                
-                // At this point, "2d6+5" might have become "9+5".
-                // Now, we need to safely evaluate this mathematical expression.
-                // We sanitize it to prevent execution of malicious code.
-                const sanitizedString = processedString.replace(/[^-()\d/*+.]/g, '');
 
-                // Using new Function() is a safer alternative to eval().
+                if (errorFromReplace) {
+                    throw errorFromReplace; // Throw the captured error to be caught by the outer catch block
+                }
+
+                // Safely evaluate the final mathematical expression (e.g., "18 + 5")
+                const sanitizedString = processedString.replace(/[^-()\d/*+.]/g, '');
                 const total = new Function('return ' + sanitizedString)();
 
-                // Return both the total and the original expression for logging.
-                return { total: Math.round(total), expression: originalExpression };
-                
+                return { 
+                    total: Math.round(total), 
+                    expression: originalExpression,
+                    breakdown: rollDetails.join('; ')
+                };
+
             } catch (e) {
-                console.error("Invalid dice roll expression:", e);
-                return null; // Return null if the expression is invalid.
+                // This now correctly catches errors and logs them to the UI
+                addLogEntry(`Error in "${originalExpression}": ${e.message || 'Invalid format.'}`);
+                return null;
             }
         }
 
         // NEW: Helper function to programmatically add entries to the log
-        function addLogEntry(text) {
+        function addLogEntry(text, isHtml = false) {
             const logEntry = document.createElement('div');
             const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            // Sanitize text to prevent HTML injection
-            const sanitizedText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            logEntry.innerHTML = `<span class="text-gray-400 mr-2">[${timestamp}]</span> ${sanitizedText}`;
+
+            // If the text is pre-formatted HTML, use it directly. Otherwise, sanitize it.
+            const content = isHtml ? text : text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+            // This uses a flex container with "items-start" to align the timestamp and the 
+            // content to the top, which fixes the alignment for multi-line messages.
+            logEntry.innerHTML = `
+                <div class="flex items-start">
+                    <span class="text-gray-500 mr-2 flex-shrink-0">[${timestamp}]</span>
+                    <div class="flex-grow">${content}</div>
+                </div>`;
+            
             logDisplay.appendChild(logEntry);
 
             // Trim the log to the latest 100 entries
@@ -1741,19 +1795,18 @@
 
         notesButton.addEventListener('click', openNotesModal);
         document.getElementById('notes-view-content').addEventListener('click', (e) => {
-            // Check if the user clicked on a span with our special class
             if (e.target.classList.contains('clickable-roll')) {
-                // THE FIX: Read the roll command from the data-roll attribute
                 const diceExpression = e.target.dataset.roll;
-                if (!diceExpression) return; // Safety check
+                if (!diceExpression) return;
 
                 const result = parseAndRoll(diceExpression);
 
                 if (result !== null) {
-                    // Log the result in a clear format
-                    addLogEntry(`Rolled ${result.expression}: ${result.total}`);
+                    // THE FIX: Use the same rich HTML formatting as the /roll command.
+                    const finalLogMessage = `Rolled <strong><span class="math-inline">\{result\.expression\}</strong\> &rarr; <strong class\="text\-xl text\-yellow\-300"\></span>{result.total}</strong>` + 
+                                        (result.breakdown ? `<br><span class="text-gray-400 text-xs">${result.breakdown}</span>` : '');
+                    addLogEntry(finalLogMessage, true);
 
-                    // If the log panel is closed, open it to show the result.
                     if (!document.body.classList.contains('log-open')) {
                         logHandle.click();
                     }
@@ -2227,81 +2280,44 @@
 
             if (isHistoryNavigation) {
                 e.preventDefault();
-
                 if (e.key === 'ArrowUp') {
-                    // Move backwards in history (towards older entries)
-                    if (logHistoryIndex < logInputHistory.length - 1) {
-                        logHistoryIndex++;
-                    }
-                } else { // ArrowDown
-                    // Move forwards in history (towards newer entries)
-                    if (logHistoryIndex >= 0) {
-                        logHistoryIndex--;
-                    }
-                }
-
-                if (logHistoryIndex >= 0) {
-                    // If we are in the history, show the historical command
-                    // We reverse the index to show the most recent item first
-                    logInput.value = logInputHistory[logInputHistory.length - 1 - logHistoryIndex];
+                    if (logHistoryIndex < logInputHistory.length - 1) logHistoryIndex++;
                 } else {
-                    // If we are at the "present", the input is blank
-                    logInput.value = '';
+                    if (logHistoryIndex >= 0) logHistoryIndex--;
                 }
-                
-                // Move the cursor to the end of the input text
+                logInput.value = (logHistoryIndex >= 0) ? logInputHistory[logInputHistory.length - 1 - logHistoryIndex] : '';
                 logInput.focus();
                 setTimeout(() => logInput.setSelectionRange(logInput.value.length, logInput.value.length), 0);
-                return; // Stop further processing for arrow keys
+                return;
             }
 
-            // If the user types any other key, reset their position in the history.
             logHistoryIndex = -1;
 
             if (e.key === 'Enter' && logInput.value.trim() !== '') {
                 e.preventDefault();
                 const inputText = logInput.value.trim();
 
-                // --- NEW HISTORY LOGIC ---
-                // Check if we are currently viewing an unchanged command from history
-                const isResubmittingHistory = logHistoryIndex !== -1 && inputText === logInputHistory[logInputHistory.length - 1 - logHistoryIndex];
-
-                if (isResubmittingHistory) {
-                    // The user pressed enter on an old command without editing it.
-                    // We remove it from its old position and will add it back to the end.
-                    const originalIndex = logInputHistory.length - 1 - logHistoryIndex;
-                    logInputHistory.splice(originalIndex, 1);
-                }
-                
-                // Add the command to the end of the history.
-                // Avoid adding consecutive duplicates if the user spams Enter on the same new command.
                 if (inputText && logInputHistory[logInputHistory.length - 1] !== inputText) {
                     logInputHistory.push(inputText);
+                    if (logInputHistory.length > 20) logInputHistory.shift();
                 }
-
-                // Ensure the history doesn't exceed 20 entries.
-                if (logInputHistory.length > 20) {
-                    logInputHistory.shift();
-                }
-                // --- END NEW HISTORY LOGIC ---
-
-                // Reset history navigation after submitting
                 logHistoryIndex = -1;
 
-                // --- This is the existing roll/log logic, it remains unchanged ---
                 if (inputText.toLowerCase().startsWith('/roll ')) {
                     const diceExpression = inputText.substring(6).trim();
                     const result = parseAndRoll(diceExpression);
                     if (result !== null) {
-                        addLogEntry(`You rolled a ${result.total} (${result.expression})`);
-                    } else {
-                        addLogEntry(`Invalid roll command: /roll ${diceExpression}`);
+                        // This creates the rich HTML message for the log.
+                        // The alignment fix is removing the "pl-2" from the breakdown span.
+                        const finalLogMessage = `Rolled <strong><span class="math-inline">${result.expression}</strong\> &rarr; <strong class\="text\-xl text\-yellow\-300"\></span>${result.total}</strong>` + 
+                                            (result.breakdown ? `<br><span class="text-gray-400 text-xs">${result.breakdown}</span>` : '');
+                        addLogEntry(finalLogMessage, true);
                     }
                 } else {
                     addLogEntry(inputText);
                 }
-                
-                logInput.value = ''; // Clear input after processing
+
+                logInput.value = '';
             }
         });
 
@@ -2416,10 +2432,10 @@
         });
 
         async function initializeDefaultScene() {
-            // Clear the shelves, but not all of localStorage
+            // Clear the shelves, but not all oflocalStorage
             shelf.innerHTML = '';
             compendiumShelfInner.innerHTML = '';
-            
+
             colorIndex = 0;
             const goblinImageUrl = 'https://www.dndbeyond.com/avatars/thumbnails/30783/955/1000/1000/638062024584880857.png';
             const goblinNotes = `<p><strong>Goblin</strong><br><em>Small Humanoid (Goblinoid), Neutral Evil</em></p><hr><p><strong>Armor Class</strong> 15 (leather armor, shield)<br><strong>Hit Points</strong> 7 (2d6)<br><strong>Speed</strong> 30 ft.</p><hr><p><strong>STR</strong> 8 (-1) | <strong>DEX</strong> 14 (+2) | <strong>CON</strong> 10 (+0) | <strong>INT</strong> 10 (+0) | <strong>WIS</strong> 8 (-1) | <strong>CHA</strong> 8 (-1)</p><hr><p><strong>Skills</strong> Stealth +6<br><strong>Senses</strong> Darkvision 60 ft., Passive Perception 9<br><strong>Languages</strong> Common, Goblin<br><strong>Challenge</strong> 1/4 (50 XP) | <strong>Proficiency Bonus</strong> +2</p><hr><p><strong><em>Nimble Escape.</em></strong> The goblin can take the Disengage or Hide action as a bonus action on each of its turns.</p><p><strong>Actions</strong><br><strong><em>Scimitar.</em></strong> <em>Melee Weapon Attack:</em> +4 to hit, reach 5 ft., one target. <em>Hit:</em> 5 (1d6 + 2) slashing damage.<br><strong><em>Shortbow.</em></strong> <em>Ranged Weapon Attack:</em> +4 to hit, range 80/320 ft., one target. <em>Hit:</em> 5 (1d6 + 2) piercing damage.</p>`;
@@ -2434,9 +2450,10 @@
             createCharacter('Goblin 3', 4, 7, ['❤️‍🩹'], goblinNotes, goblinOptions, true);
             createCharacter('Hector the Well-Endowed', 18, 18, ['⚡️'], '', hectorOptions, true);
             createCharacter('Goblin', 7, 7, [], goblinNotes, { ...goblinOptions, parent: compendiumShelfInner }, true);
-            
-            logDisplay.innerHTML = `<div><span class="text-gray-400 mr-2">[11:46:00]</span> Welcome to the Initiative Tracker! (hint, try typing /roll 1d20)</div>`;
-            
+
+            // THE FIX: Use the helper function for a properly formatted timestamp.
+            addLogEntry("Welcome to the Initiative Tracker! (hint, try typing /roll 1d20, or /roll 2d20kh1 for advantage)");
+
             // Perform one final save after creating all items
             await saveState();
 
