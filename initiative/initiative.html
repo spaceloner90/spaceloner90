@@ -349,9 +349,6 @@
     <!-- Main container for the scene -->
     <div id="main-wrapper">
         <div class="w-full max-w-6xl mx-auto px-4 py-8">
-
-            <h1 class="text-3xl font-bold text-center text-gray-800 mb-8">Vick's Initiative Tracker</h1>
-
             <!-- Container for the elements, now a wrapping flex container -->
             <div id="shelf-items" class="flex flex-wrap justify-center items-start gap-4 min-h-80 p-4 bg-white rounded-lg shadow-inner">
 
@@ -1670,13 +1667,43 @@
         }
 
         function makeDiceRollsClickable(htmlString) {
-            // This regex finds dice notation like "1d20", "2d6+5", or "1d8 - 2".
-            // It looks for a number, 'd', a number, and then an optional +/- modifier.
-            const rollRegex = /\b(\d+d\d+(\s*[+-]\s*\d+)?)\b/gi;
-            
-            return htmlString.replace(rollRegex, (match) => {
-                const cleanMatch = match.replace(/\s/g, ''); // Remove whitespace for the roll parser
-                return `<span class="clickable-roll" title="Click to roll ${cleanMatch}">${match}</span>`;
+            // This regex identifies three patterns in order of priority:
+            // 1. Full dice notation like "1d8+2".
+            // 2. Parenthesized modifiers like "(-1)".
+            // 3. Standalone modifiers like "+6", but only when they are preceded by a space or a '>' from an HTML tag.
+            //    This is the key fix. It captures the preceding character so we can put it back.
+            const rollRegex = /\b(\d+d\d+(?:\s*[+-]\s*\d+)?)\b|\((\s*[+-]\s*\d+)\)|(>|\s)([+-]\d+)\b/gi;
+
+            return htmlString.replace(rollRegex, (match, standardRoll, parenModifier, prefixForStandalone, standaloneModifier) => {
+                let rollExpression = '';
+                let title = '';
+                
+                if (standardRoll) {
+                    // Case 1: Matched a standard dice expression (e.g., "2d6", "1d20 + 5")
+                    rollExpression = standardRoll.replace(/\s/g, '');
+                    title = `Click to roll ${rollExpression}`;
+                    // Just wrap the original match to preserve spacing
+                    return `<span class="clickable-roll" data-roll="${rollExpression}" title="${title}">${match}</span>`;
+                
+                } else if (parenModifier) {
+                    // Case 2: Matched a parenthesized modifier (e.g., "(-1)")
+                    const modifier = parenModifier.replace(/\s/g, '');
+                    rollExpression = `1d20${modifier}`;
+                    title = `Click to roll ${rollExpression}`;
+                    // Wrap the original match
+                    return `<span class="clickable-roll" data-roll="${rollExpression}" title="${title}">${match}</span>`;
+                
+                } else if (standaloneModifier) {
+                    // Case 3: Matched a standalone modifier (e.g., " +4" or ">+4")
+                    const modifier = standaloneModifier.replace(/\s/g, '');
+                    rollExpression = `1d20${modifier}`;
+                    title = `Click to roll ${rollExpression}`;
+                    // IMPORTANT: We must put the captured prefix (the space or '>') back before our span.
+                    return `${prefixForStandalone}<span class="clickable-roll" data-roll="${rollExpression}" title="${title}">${standaloneModifier}</span>`;
+                }
+
+                // Fallback in case of an unexpected match
+                return match;
             });
         }
 
@@ -1716,7 +1743,10 @@
         document.getElementById('notes-view-content').addEventListener('click', (e) => {
             // Check if the user clicked on a span with our special class
             if (e.target.classList.contains('clickable-roll')) {
-                const diceExpression = e.target.textContent;
+                // THE FIX: Read the roll command from the data-roll attribute
+                const diceExpression = e.target.dataset.roll;
+                if (!diceExpression) return; // Safety check
+
                 const result = parseAndRoll(diceExpression);
 
                 if (result !== null) {
