@@ -18,13 +18,12 @@
          */
         body {
             font-family: 'Inter', sans-serif;
-            user-select: none; /* Prevent text selection during drag operations */
-            overflow: hidden; /* Prevent scrollbars from appearing due to scaling */
-            width: 100vw; /* Ensure body takes full viewport width */
-            height: 100vh; /* Ensure body takes full viewport height */
+            user-select: none;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
             transform-origin: top left;
-            position: relative; /* Needed for absolute children within, if any */
-            /* Add transition for smooth zoom effect, though not explicitly requested, it's good practice */
+            position: relative;
             transition: transform 0.1s ease-out;
 
         }
@@ -169,10 +168,24 @@
 
         /* --- Compendium & Main Wrapper Styles --- */
         #main-wrapper {
-            transition: padding-right 0.3s ease-in-out, padding-bottom 0.3s ease-in-out;
+            position: absolute; /* Take it out of normal flow to position it precisely */
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0; /* Make it fill the viewport initially */
+            overflow-y: auto; /* Enable vertical scrolling when content overflows */
+            transition: padding-right 0.3s ease-in-out, bottom 0.3s ease-in-out;
+        }
+        #main-content-area {
+            padding-top: 2rem; /* Example: add more top padding */
+            padding-bottom: 2rem; /* Example: add more bottom padding */
+            min-height: calc(100% - 4rem); /* Ensure it takes up sufficient height, considering its own padding */
         }
         body.compendium-open #main-wrapper {
             padding-right: 260px;
+        }
+        body.log-open #main-wrapper {
+            bottom: 240px;
         }
 
         #compendium-container {
@@ -359,7 +372,7 @@
 
     <!-- Main container for the scene -->
     <div id="main-wrapper">
-        <div class="w-full max-w-6xl mx-auto px-4 py-8">
+        <div id="main-content-area" class="w-full max-w-6xl mx-auto px-4 py-8">
             <!-- Container for the elements, now a wrapping flex container -->
             <div id="shelf-items" class="flex flex-wrap justify-center items-start gap-4 min-h-80 p-4 bg-white rounded-lg shadow-inner">
 
@@ -2666,7 +2679,8 @@
             // If we're in a valid area, prevent default browser behavior and start the selection.
             e.preventDefault();
             isSelecting = true;
-            startX = e.clientX; startY = e.clientY;
+            startX = e.clientX / currentZoom;
+            startY = e.clientY / currentZoom;
             Object.assign(selectionBox.style, { left: `${startX}px`, top: `${startY}px`, width: '0px', height: '0px', display: 'block' });
             
             // If not holding shift, clear all previous selections before starting a new one.
@@ -2680,7 +2694,8 @@
             if (!isSelecting || !selectionContainer) return;
 
             e.preventDefault();
-            const currentX = e.clientX, currentY = e.clientY;
+            const currentX = e.clientX / currentZoom;
+            const currentY = e.clientY / currentZoom;
             const width = Math.abs(currentX - startX), height = Math.abs(currentY - startY);
             const left = Math.min(currentX, startX), top = Math.min(currentY, startY);
             Object.assign(selectionBox.style, { width: `${width}px`, height: `${height}px`, left: `${left}px`, top: `${top}px` });
