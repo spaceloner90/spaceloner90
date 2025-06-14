@@ -1302,12 +1302,15 @@
                     const characterToCopy = Character.fromElement(item);
 
                     if (characterToCopy) {
-                        // THE FIX: Any drag between containers now performs an exact copy.
-                        // It gets a clean data object and creates a new character with that exact data.
+                        // position to determine where the new copy should be inserted.
+                        const insertBeforeSibling = item.nextElementSibling;
+
+                        // Create the new copy at the correct drop position.
                         const exactCopyData = characterToCopy.toJSON();
                         createCharacter({
                             ...exactCopyData,
-                            parent: newParent
+                            parent: newParent,
+                            insertBeforeSibling: insertBeforeSibling // Pass the insertion point
                         });
                     }
 
