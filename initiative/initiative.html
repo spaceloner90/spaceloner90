@@ -1488,18 +1488,36 @@
 
         function getDragAfterElement(container, x, y) {
             const draggableElements = [...container.querySelectorAll('.draggable:not(.dragging)')];
-            return draggableElements.reduce((closest, child) => {
-                const box = child.getBoundingClientRect();
-                const isVertical = container.id === 'compendium-shelf-inner';
 
-                const offset = isVertical ? y - box.top - box.height / 2 : x - box.left - box.width / 2;
+            // Find the element visually closest to the cursor using 2D distance
+            const closest = draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            // Pythagorean theorem to find the true distance to the center of the child
+            const distance = Math.sqrt(Math.pow(x - (box.left + box.width / 2), 2) + Math.pow(y - (box.top + box.height / 2), 2));
 
-                if (offset < 0 && offset > closest.offset) {
-                    return { offset: offset, element: child };
+            if (distance < closest.distance) {
+                return { distance, element: child };
+            } else {
+                return closest;
+            }
+            }, { distance: Number.POSITIVE_INFINITY });
+
+            const closestElement = closest.element;
+
+            if (closestElement) {
+                const box = closestElement.getBoundingClientRect();
+                // If the cursor is in the right half of the closest element, we want to insert AFTER it.
+                // So, we return its next sibling as the insertion point.
+                if (x > box.left + box.width / 2) {
+                    return closestElement.nextElementSibling;
                 } else {
-                    return closest;
+                    // Otherwise, we insert BEFORE it by returning the element itself.
+                    return closestElement;
                 }
-            }, { offset: Number.NEGATIVE_INFINITY }).element;
+            } else {
+                // If there are no other elements, return null to append at the end.
+                return null;
+            }
         }
 
         // --- HP Display Logic ---
@@ -1707,7 +1725,7 @@
         function createTurnMarker(id = null, turn = '1', skip_save = false) {
             const turnMarker = document.createElement('div');
             turnMarker.id = id || `turn-marker-${crypto.randomUUID()}`;
-            turnMarker.className = 'draggable flex items-end h-56';
+            turnMarker.className = 'draggable flex items-end h-64';
 
             turnMarker.innerHTML = `
                 <div class="w-4 h-full bg-black rounded-l-lg"></div>
