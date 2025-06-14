@@ -483,6 +483,12 @@
                     <button id="close-notes-modal-btn" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-red-600 focus:outline-none ml-2">Close</button>
                 </div>
             </div>
+            <!-- NEW: CR/Level Input -->
+            <div class="mb-4 flex items-center">
+                <label for="notes-challenge-input" class="text-gray-700 font-medium mr-2 flex-shrink-0">CR/Level:</label>
+                <!-- Removed disabled attribute here so it's always enabled in HTML -->
+                <input type="text" id="notes-challenge-input" class="flex-grow p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 text-gray-800">
+            </div>
             
             <!-- NEW: View Mode Container -->
             <div id="notes-view-content" class="flex-grow overflow-y-auto p-4 border border-gray-300 rounded-md bg-gray-50">
@@ -549,7 +555,9 @@
         const notesToggleEditBtn = document.getElementById('notes-toggle-edit-btn');
         const closeNotesModalButton = document.getElementById('close-notes-modal-btn');
         const notesTitle = document.getElementById('notes-title');
-        const notesContentEditable = document.getElementById('notes-content-editable');
+        // NEW: Reference to the challenge input in notes modal
+        const notesChallengeInput = document.getElementById('notes-challenge-input');
+
         const hideHpButton = document.getElementById('hide-hp-btn');
         const compendiumContainer = document.getElementById('compendium-container');
         const compendiumHandle = document.getElementById('compendium-handle');
@@ -620,14 +628,14 @@
                 element.querySelector('.initiative-bonus').textContent = this.initiativeBonus;
                 element.dataset.notes = this.notes;
                 element.dataset.bgImageKey = this.bgImageKey;
-                element.dataset.challenge = this.challenge;
+                element.dataset.challenge = this.challenge; // Ensure data-challenge is updated
 
                 // --- Update Background Color ---
                 const existingColor = Array.from(element.classList).find(cls => colorPalette.includes(cls));
                 if (existingColor) element.classList.remove(existingColor);
                 element.classList.add(this.bgColor);
 
-                // --- THE FIX: Asynchronously handle background image rendering ---
+                // --- Asynchronously handle background image rendering ---
                 if (this.bgImageKey) {
                 if (this.bgImageKey.startsWith('indexeddb://')) {
                     // If it's a local file, fetch the blob from the database.
@@ -1435,8 +1443,8 @@
                 const span = cardElement.querySelector(selector);
                 if (!span) return;
 
-                // THE FIX: This function must be async to await the render.
-                const resolveChange = async () => { // <-- async
+                // This function must be async to await the render.
+                const resolveChange = async () => { 
                     const character = Character.fromElement(cardElement);
                     if (character) {
                         let value = span.textContent.trim();
@@ -1450,7 +1458,7 @@
                                 character[property] = parseInt(value, 10) || 0;
                             }
                         }
-                        await character.render(); // <-- await
+                        await character.render(); 
                         saveState();
                     }
                 };
@@ -1602,11 +1610,27 @@
             if(applyFilters) {
                 console.log("Applying filters to compendium items...");
                 const searchTerm = compendiumSearch.value.toLowerCase();
-                const minCr = eval(minCrInput.value);
-                const maxCr = eval(maxCrInput.value);
+                let minCr = NaN;
+                let maxCr = NaN;
+                try {
+                    minCr = eval(minCrInput.value);
+                } catch (e) {
+                    // No need to log a failed eval
+                }
+                try {
+                    maxCr = eval(maxCrInput.value);
+                } catch (e) {
+                    // No need to log a failed eval
+                }
                 allItems.forEach(item => {
                     const name = item.querySelector('.font-bold.text-lg').textContent.toLowerCase();
-                    const cr = parseFloat(item.dataset.challenge) || '';
+                    let cr = NaN;
+                    try {
+                        cr = eval(item.dataset.challenge);
+                    }  catch (e) {
+                        // No need to log a failed eval
+                    }
+                    
                     if (!name.includes(searchTerm) || (cr && minCr && cr < minCr) || (cr && maxCr && cr > maxCr)) {
                         item.setAttribute('shouldFilterOut', true);
                     } else {
@@ -1696,7 +1720,6 @@
             refreshCompendiumLayout();
             newItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-
 
         function createCharacter(options, skip_save = false) {
             const character = new Character(options);
@@ -1895,8 +1918,8 @@
                 if (allHaveStatus) symbolButton.classList.add('symbol-selected');
                 symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${(statusSymbols.indexOf(symbol) + 1) % 10}</span>`;
 
-                // THE FIX: This event listener must be async.
-                symbolButton.addEventListener('click', async () => { // <-- async
+                // This event listener must be async.
+                symbolButton.addEventListener('click', async () => { 
                     for (const item of selectedItems) {
                         const character = Character.fromElement(item);
                         if (!character) continue;
@@ -1908,7 +1931,7 @@
                                 character.statuses.push(symbol);
                             }
                         }
-                        await character.render(); // <-- await
+                        await character.render(); 
                     }
                     populateSymbolModal(selectedItems);
                     saveState();
@@ -1922,14 +1945,14 @@
             colorPalette.forEach(color => {
                 const swatch = document.createElement('button');
                 swatch.className = `w-8 h-8 rounded-full ${color} border-2 border-white/50 hover:scale-110 transition-transform`;
-                // THE FIX: This event listener must be async.
-                swatch.addEventListener('click', async () => { // <-- async
+                // This event listener must be async.
+                swatch.addEventListener('click', async () => { 
                     for (const item of document.querySelectorAll('.highlighted')) {
                         const character = Character.fromElement(item);
                         if (character) {
                             character.bgImageKey = '';
                             character.bgColor = color;
-                            await character.render(); // <-- await
+                            await character.render(); 
                         }
                     };
                     contextMenu.classList.add('invisible');
@@ -2008,6 +2031,10 @@
 
             // Get the raw, clean notes HTML from the character data
             const rawNotes = firstItem.dataset.notes || '';
+            const character = Character.fromElement(firstItem);
+
+            // Populate the challenge input field
+            notesChallengeInput.value = character ? character.challenge : '';
             
             // 1. Put the clickable version in the view pane
             const processedNotes = makeDiceRollsClickable(rawNotes);
@@ -2016,9 +2043,10 @@
             // 2. Put the raw HTML in the edit pane (a contenteditable div now)
             document.getElementById('notes-edit-content').innerHTML = rawNotes;
 
-            // 3. Set to view mode by default
+            // 3. Set to view mode by default, challenge input remains enabled
             notesModal.classList.remove('edit-mode');
             notesToggleEditBtn.textContent = 'Edit';
+            notesChallengeInput.disabled = true;
 
             notesModal.classList.remove('invisible');
         }
@@ -2049,44 +2077,47 @@
             }
         });
         closeNotesModalButton.addEventListener('click', closeNotesModal);
-        notesToggleEditBtn.addEventListener('click', async () => { // <-- async
+        notesToggleEditBtn.addEventListener('click', async () => { 
             const isInEditMode = notesModal.classList.contains('edit-mode');
             if (isInEditMode) {
+                // Save logic
                 const rawNotes = document.getElementById('notes-edit-content').innerHTML;
+                const challengeValue = notesChallengeInput.value.trim(); // Get the challenge value
 
                 for (const item of document.querySelectorAll('.highlighted')) {
                     const character = Character.fromElement(item);
                     if (character) {
                         character.notes = rawNotes;
-                        await character.render(); // <-- await
+                        character.challenge = challengeValue; // Save the challenge value
+                        await character.render(); 
                     }
                 }
                 saveState();
                 notesModal.classList.remove('edit-mode');
                 notesToggleEditBtn.textContent = 'Edit';
                 document.getElementById('notes-view-content').innerHTML = makeDiceRollsClickable(rawNotes);
+                notesChallengeInput.disabled = true;
             } else {
+                // Edit logic
                 notesModal.classList.add('edit-mode');
                 notesToggleEditBtn.textContent = 'Save';
+                notesChallengeInput.disabled = false;
                 setTimeout(() => document.getElementById('notes-edit-content').focus(), 0);
             }
         });
         addStatusButton.addEventListener('click', handleStatusModalToggle);
-        closeNotesModalButton.addEventListener('click', () => {
-            // Note: We could add a check here for unsaved changes later if needed.
-            notesModal.classList.add('invisible');
-        });
+        closeModalButton.addEventListener('click', () => statusModal.classList.add('invisible')); // Existing close button for status modal.
         statusModal.addEventListener('click', (e) => { if (e.target === statusModal) statusModal.classList.add('invisible'); });
 
         // Fix for the Image URL button
-        applyUrlButton.addEventListener('click', async () => { // <-- async
+        applyUrlButton.addEventListener('click', async () => { 
             const url = imageUrlInput.value.trim();
             if (url) {
                 for (const item of document.querySelectorAll('.highlighted')) {
                     const character = Character.fromElement(item);
                     if (character) {
                         character.bgImageKey = url;
-                        await character.render(); // <-- await
+                        await character.render(); 
                     }
                 };
                 saveState();
@@ -2101,7 +2132,7 @@
                 const imageId = `indexeddb://${crypto.randomUUID()}`;
                 await saveImageToIndexedDB(imageId, file);
                 
-                // THE FIX: Changed from forEach to a for...of loop, which is compatible with await.
+                // Changed from forEach to a for...of loop, which is compatible with await.
                 for (const item of document.querySelectorAll('.highlighted')) {
                     const character = Character.fromElement(item);
                     if (character) {
@@ -2195,7 +2226,7 @@
                             }
                         }
                         
-                        // THE FIX: Use the correct object-based signature for createCharacter
+                        // Use the correct object-based signature for createCharacter
                         createCharacter({
                             ...charData, // Spread all properties from the imported data object
                             bgImageKey: actualBgImageKey, // Use the potentially new image key
@@ -2253,7 +2284,7 @@
             }
 
             data.forEach(charData => {
-                // THE FIX: Use the correct object-based signature for createCharacter
+                // Use the correct object-based signature for createCharacter
                 createCharacter({
                     name: charData.name || 'Unnamed Character',
                     hp: charData.hp || '10',
@@ -2264,7 +2295,8 @@
                     bgImageKey: charData.bgImageKey || '',
                     initiative: charData.initiative || '',
                     initiativeBonus: charData.initiativeBonus || '',
-                    parent: compendiumShelfInner
+                    parent: compendiumShelfInner,
+                    challenge: charData.challenge || '' // Ensure challenge is passed on import
                 }, true); // skip_save = true
             });
 
@@ -2439,12 +2471,12 @@
             saveState();
         });
 
-        clearStatusesButton.addEventListener('click', async () => { // <-- async
+        clearStatusesButton.addEventListener('click', async () => { 
             for (const item of document.querySelectorAll('.highlighted')) {
                 const character = Character.fromElement(item);
                 if (character) {
                     character.statuses = [];
-                    await character.render(); // <-- await
+                    await character.render(); 
                 }
             }
             saveState();
@@ -2515,11 +2547,9 @@
 
             if (isHistoryNavigation) {
                 e.preventDefault();
-                if (e.key === 'ArrowUp') {
-                    if (logHistoryIndex < logInputHistory.length - 1) logHistoryIndex++;
-                } else {
-                    if (logHistoryIndex >= 0) logHistoryIndex--;
-                }
+                if (logHistoryIndex < logInputHistory.length - 1) logHistoryIndex++;
+                else logHistoryIndex = -1; // Go to current input after history.
+                
                 logInput.value = (logHistoryIndex >= 0) ? logInputHistory[logInputHistory.length - 1 - logHistoryIndex] : '';
                 logInput.focus();
                 setTimeout(() => logInput.setSelectionRange(logInput.value.length, logInput.value.length), 0);
@@ -2558,6 +2588,8 @@
 
         let isSelecting = false;
         let startX, startY;
+        let selectionContainer = null; // Declare here to be accessible globally in this scope
+
         document.body.addEventListener('mousedown', (e) => {
             // Block selection if clicking on specific interactive elements like cards, buttons, or modals.
             if (e.target.closest('.draggable, button, input, #context-menu, #status-modal, #notes-modal, #compendium-data-modal, #log-container')) {
@@ -2604,7 +2636,7 @@
             
             const boxRect = selectionBox.getBoundingClientRect();
             
-            // THE FIX: Only query for characters within the active container.
+            // Only query for characters within the active container.
             selectionContainer.querySelectorAll('.draggable.character-card').forEach(item => {
                 // Do not select items hidden by the compendium search filter.
                 if (item.style.display === 'none') return; 
@@ -2706,6 +2738,7 @@
             shelf.innerHTML = '';
             compendiumShelfInner.innerHTML = '';
 
+            characterRegistry.clear(); // Clear registry too for a fresh start.
             colorIndex = 0;
             const goblinImageUrl = 'https://www.dndbeyond.com/avatars/thumbnails/30783/955/1000/1000/638062024584880857.png';
             const goblinNotes = `<p><strong>Goblin</strong><br><em>Small Humanoid (Goblinoid), Neutral Evil</em></p><hr><p><strong>Armor Class</strong> 15 (leather armor, shield)<br><strong>Hit Points</strong> 7 (2d6)<br><strong>Speed</strong> 30 ft.</p><hr><p><strong>STR</strong> 8 (-1) | <strong>DEX</strong> 14 (+2) | <strong>CON</strong> 10 (+0) | <strong>INT</strong> 10 (+0) | <strong>WIS</strong> 8 (-1) | <strong>CHA</strong> 8 (-1)</p><hr><p><strong>Skills</strong> Stealth +6<br><strong>Senses</strong> Darkvision 60 ft., Passive Perception 9<br><strong>Languages</strong> Common, Goblin<br><strong>Challenge</strong> 1/4 (50 XP) | <strong>Proficiency Bonus</strong> +2</p><hr><p><strong><em>Nimble Escape.</em></strong> The goblin can take the Disengage or Hide action as a bonus action on each of its turns.</p><p><strong>Actions</strong><br><strong><em>Scimitar.</em></strong> <em>Melee Weapon Attack:</em> +4 to hit, reach 5 ft., one target. <em>Hit:</em> 5 (1d6 + 2) slashing damage.<br><strong><em>Shortbow.</em></strong> <em>Ranged Weapon Attack:</em> +4 to hit, range 80/320 ft., one target. <em>Hit:</em> 5 (1d6 + 2) piercing damage.</p>`;
@@ -2713,11 +2746,11 @@
 
             createTurnMarker(null, '1', true);
 
-            createCharacter({ name: 'Goblin 1', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 16, challenge: 0.25 }, true);
-            createCharacter({ name: 'Goblin 2', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 14, challenge: 0.25 }, true);
-            createCharacter({ name: 'Goblin 3', hp: 4, totalHp: 7, statuses: ['❤️‍🩹'], notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 9, challenge: 0.25 }, true);
-            createCharacter({ name: 'Hector the Well-Endowed', hp: 18, totalHp: 18, statuses: ['⚡️'], bgImageKey: hectorImageUrl, initiativeBonus: -1, initiative: 5, challenge: 1 }, true);
-            createCharacter({ name: 'Goblin', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, parent: compendiumShelfInner, initiativeBonus: 2, challenge: 0.25 }, true);
+            createCharacter({ name: 'Goblin 1', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 16, challenge: '1/4' }, true);
+            createCharacter({ name: 'Goblin 2', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 14, challenge: '1/4' }, true);
+            createCharacter({ name: 'Goblin 3', hp: 4, totalHp: 7, statuses: ['❤️‍🩹'], notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 9, challenge: '1/4' }, true);
+            createCharacter({ name: 'Hector the Well-Endowed', hp: 18, totalHp: 18, statuses: ['⚡️'], bgImageKey: hectorImageUrl, initiativeBonus: -1, initiative: 5, challenge: '1' }, true);
+            createCharacter({ name: 'Goblin', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, parent: compendiumShelfInner, initiativeBonus: 2, challenge: '1/4' }, true);
             
             addLogEntry("Welcome to the Initiative Tracker! (hint, try typing /roll 1d20, or /roll 2d20kh1 for advantage)");
 
@@ -2749,7 +2782,7 @@
                 updateAllCharacterHpDisplay();
                 refreshCompendiumLayout(); // This function causes the highlight.
 
-                // THE FIX: Explicitly find and un-highlight any selected item in the compendium on load.
+                // Explicitly find and un-highlight any selected item in the compendium on load.
                 const highlightedCompendiumItem = compendiumShelfInner.querySelector('.highlighted');
                 if (highlightedCompendiumItem) {
                     highlightedCompendiumItem.classList.remove('highlighted');
