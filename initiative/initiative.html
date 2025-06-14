@@ -12,10 +12,21 @@
         *, *::before, *::after {
             box-sizing: border-box;
         }
-
+        /*
+         * Ensure the body doesn't scale, but contains the scaled content.
+         * The overall scale will be applied to #content-wrapper.
+         */
         body {
             font-family: 'Inter', sans-serif;
             user-select: none; /* Prevent text selection during drag operations */
+            overflow: hidden; /* Prevent scrollbars from appearing due to scaling */
+            width: 100vw; /* Ensure body takes full viewport width */
+            height: 100vh; /* Ensure body takes full viewport height */
+            transform-origin: top left;
+            position: relative; /* Needed for absolute children within, if any */
+            /* Add transition for smooth zoom effect, though not explicitly requested, it's good practice */
+            transition: transform 0.1s ease-out;
+
         }
         /* Style for the contenteditable fields to give user feedback */
         [contenteditable]:focus {
@@ -520,6 +531,16 @@
                 <!-- The result will be shown here -->
             </div>
         </div>
+    </div>
+
+    <!-- Zoom Controls -->
+    <div class="fixed top-4 left-4 z-50 flex space-x-2">
+        <button id="zoom-out-btn" class="bg-gray-700 text-white font-bold py-2 px-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 text-2xl leading-none w-10 h-10 flex items-center justify-center">
+            -
+        </button>
+        <button id="zoom-in-btn" class="bg-gray-700 text-white font-bold py-2 px-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 text-2xl leading-none w-10 h-10 flex items-center justify-center">
+            +
+        </button>
     </div>
 
 
@@ -2727,6 +2748,16 @@
             }
             if (isNotesModalOpen || isStatusModalOpen || isContextMenuOpen || activeElementIsEditable) return;
 
+            if (event.key === '+' || event.key === '=') {
+                event.preventDefault(); // Prevent default browser zoom behavior
+                zoomInBtn.click();
+                return;
+            } else if (event.key === '-') {
+                event.preventDefault(); // Prevent default browser zoom behavior
+                zoomOutBtn.click();
+                return;
+            }
+
             if (isMouseOverCompendium) {
                 if (event.code === 'ArrowDown') {
                     event.preventDefault();
@@ -2760,6 +2791,45 @@
         window.addEventListener('click', (e) => {
             if (!contextMenu.classList.contains('invisible') && !contextMenu.contains(e.target) && !e.target.closest('.draggable')) {
                 contextMenu.classList.add('invisible');
+            }
+        });
+
+        // Get references to zoom buttons
+        const zoomInBtn = document.getElementById('zoom-in-btn');
+        const zoomOutBtn = document.getElementById('zoom-out-btn');
+        const mainWrapper = document.getElementById('main-wrapper');
+
+        // Initial zoom level (1.0 = 100%)
+        let currentZoom = parseFloat(localStorage.getItem('uiZoom')) || 1.0;
+        const ZOOM_STEP = 0.1;
+        const MIN_ZOOM = 0.3;
+        const MAX_ZOOM = 1.5;
+
+        // Function to apply the current zoom level to the body
+        function applyZoom() {
+            document.body.style.transform = `scale(${currentZoom})`;
+            document.body.style.transformOrigin = 'top left';
+            localStorage.setItem('uiZoom', currentZoom.toFixed(2));
+            
+            // Adjust the body's width/height to account for the scaled content,
+            // otherwise, fixed elements might be off-screen.
+            // This ensures the scrollbars appear on the body if needed due to zoom.
+            document.body.style.width = `${100 / currentZoom}vw`;
+            document.body.style.height = `${100 / currentZoom}vh`;
+        }
+
+        // Event listeners for zoom buttons
+        zoomInBtn.addEventListener('click', () => {
+            if (currentZoom < MAX_ZOOM) {
+                currentZoom = Math.min(MAX_ZOOM, currentZoom + ZOOM_STEP);
+                applyZoom();
+            }
+        });
+
+        zoomOutBtn.addEventListener('click', () => {
+            if (currentZoom > MIN_ZOOM) {
+                currentZoom = Math.max(MIN_ZOOM, currentZoom - ZOOM_STEP);
+                applyZoom();
             }
         });
 
