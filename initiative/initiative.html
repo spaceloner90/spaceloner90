@@ -540,6 +540,90 @@
         const logInput = document.getElementById('log-input');
         const d20RollBtn = document.getElementById('d20-roll-btn');
 
+        // --- Class-based Character Management ---
+
+        const characterRegistry = new Map();
+
+        class Character {
+            constructor({ id, name, hp, totalHp, statuses, notes, initiative, initiativeBonus, bgColor, bgImageKey, parent }) {
+                this.id = id || `char-${crypto.randomUUID()}`;
+                this.name = name || '';
+                this.hp = hp || 10;
+                this.totalHp = totalHp || 10;
+                this.statuses = statuses || [];
+                this.notes = notes || '';
+                this.initiative = initiative || 0;
+                this.initiativeBonus = initiativeBonus || 0;
+                this.bgColor = bgColor || colorPalette[colorIndex++ % colorPalette.length];
+                this.bgImageKey = bgImageKey || '';
+                this.parent = parent || shelf;
+            }
+
+            // Returns a plain object for saving and exporting
+            toJSON() {
+                return {
+                    name: this.name,
+                    hp: this.hp,
+                    totalHp: this.totalHp,
+                    statuses: this.statuses,
+                    notes: this.notes,
+                    initiative: this.initiative,
+                    initiativeBonus: this.initiativeBonus,
+                    bgColor: this.bgColor,
+                    bgImageKey: this.bgImageKey
+                };
+            }
+
+            // Creates a new Character instance from a DOM element's ID
+            static fromElement(element) {
+                return characterRegistry.get(element.id);
+            }
+
+            // Updates the character's DOM representation from its data
+            render() {
+                let element = document.getElementById(this.id);
+                if (!element) return null;
+
+                // Update all displayed text fields
+                element.querySelector('.font-bold.text-lg').textContent = this.name;
+                element.querySelector('.current-hp').textContent = this.hp;
+                element.querySelector('.total-hp').textContent = this.totalHp;
+                element.querySelector('.initiative-value').textContent = this.initiative;
+                element.querySelector('.initiative-bonus').textContent = this.initiativeBonus;
+                
+                element.dataset.notes = this.notes;
+
+                // Update background color
+                // First, remove any existing color classes to prevent conflicts
+                const existingColor = Array.from(element.classList).find(cls => colorPalette.includes(cls));
+                if (existingColor) element.classList.remove(existingColor);
+                element.classList.add(this.bgColor);
+
+                // Update background image
+                element.dataset.bgImageKey = this.bgImageKey;
+                // This part needs to be improved to handle image loading logic, but for now it's a placeholder
+                if (this.bgImageKey && this.bgImageKey.startsWith('http')) {
+                    element.style.backgroundImage = `url('${this.bgImageKey}')`;
+                } else {
+                    element.style.backgroundImage = '';
+                }
+
+                // Update statuses
+                const statusContainer = element.querySelector('.status-container');
+                statusContainer.innerHTML = ''; // Clear existing statuses
+                this.statuses.forEach(symbol => {
+                    const statusIcon = document.createElement('span');
+                    statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
+                    statusIcon.textContent = symbol;
+                    statusContainer.appendChild(statusIcon);
+                });
+
+                // Call helper functions to update UI based on the new data
+                updateNotesIndicator(element);
+                updateCharacterHpDisplay(element);
+            }
+        }
+
         // --- Dice Rolling Logic ---
 
         // Get references to the dice modal elements
@@ -784,7 +868,7 @@
                             return '';
                         }
                         if (numToKeep > numDice) {
-                            errorFromReplace = new Error(`Cannot keep ${numToKeep} dice; only <span class="math-inline">\{numDice\} were rolled in "</span>{match}".`);
+                            errorFromReplace = new Error(`Cannot keep ${numToKeep} dice; only ${numDice} were rolled in "${match}".`);
                             return '';
                         }
 
@@ -1035,29 +1119,16 @@
         // --- LocalStorage Persistence (now only for order) ---
         async function saveState() {
             try {
-                // The localStorage parts are synchronous
+                // Save order and other UI states from localStorage
                 const initiativeOrder = Array.from(shelf.children).map(item => item.id);
                 localStorage.setItem('initiativeOrder', JSON.stringify(initiativeOrder));
                 const compendiumOrder = Array.from(compendiumShelfInner.children).map(item => item.id);
                 localStorage.setItem('compendiumOrder', JSON.stringify(compendiumOrder));
                 localStorage.setItem('isLogOpen', document.body.classList.contains('log-open'));
                 localStorage.setItem('logContent', logDisplay.innerHTML);
+                localStorage.setItem('isHpHidden', JSON.stringify(isHpHidden));
 
-                // This part now waits for all characters to be saved to IndexedDB
-                const characterPromises = Array.from(document.querySelectorAll('.character-card')).map(item => {
-                    const characterData = {
-                        name: item.querySelector('.font-bold.text-lg')?.textContent.trim() || '',
-                        hp: item.querySelector('.current-hp')?.textContent.trim() || '',
-                        totalHp: item.querySelector('.total-hp')?.textContent.trim() || '',
-                        statuses: Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent),
-                        bgColor: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
-                        bgImageKey: item.dataset.bgImageKey || '',
-                        notes: item.dataset.notes || ''
-                    };
-                    return saveCharacterToIndexedDB(item.id, characterData);
-                });
-                await Promise.all(characterPromises); // This is the crucial await
-
+                // Save Turn Marker data
                 const turnMarker = document.querySelector('[id^="turn-marker-"]');
                 if (turnMarker) {
                     const turnMarkerData = {
@@ -1066,7 +1137,12 @@
                     };
                     localStorage.setItem(turnMarker.id, JSON.stringify(turnMarkerData));
                 }
-                localStorage.setItem('isHpHidden', JSON.stringify(isHpHidden));
+
+                const characterPromises = [];
+                for (const [id, character] of characterRegistry.entries()) {
+                    characterPromises.push(saveCharacterToIndexedDB(id, character.toJSON()));
+                }
+                await Promise.all(characterPromises);
 
             } catch (e) {
                 console.error("Failed to save state:", e);
@@ -1079,50 +1155,48 @@
 
             const order = JSON.parse(orderJSON);
             const itemPromises = order.map(async (id) => {
-                // Check if it's a turn marker (still stored directly in localStorage)
                 if (id.startsWith('turn-marker')) {
                     const turnMarkerJSON = localStorage.getItem(id);
                     return turnMarkerJSON ? { id, data: JSON.parse(turnMarkerJSON) } : null;
-                } else { // It's a character, load from IndexedDB
+                } else {
                     const characterData = await loadCharacterFromIndexedDB(id);
                     if (!characterData) return null;
-
-                    let bgImageUrl = '';
-                    if (characterData.bgImageKey && characterData.bgImageKey.startsWith('indexeddb://')) {
-                        const blob = await loadImageFromIndexedDB(characterData.bgImageKey).catch(e => console.error(e));
-                        if(blob) bgImageUrl = URL.createObjectURL(blob);
-                    } else if (characterData.bgImageKey) {
-                        bgImageUrl = characterData.bgImageKey;
-                    }
-                    characterData.bgImageUrl = bgImageUrl;
                     return { id, data: characterData };
                 }
             });
 
             const loadedItems = await Promise.all(itemPromises);
 
-            loadedItems.forEach(item => {
-                if (!item) return;
+            for (const item of loadedItems) {
+                if (!item) continue;
                 const { id, data } = item;
-                const options = {
-                    id: id,
-                    parent: targetParent,
-                    backgroundColorClass: data.bgColor,
-                    backgroundImage: data.bgImageUrl,
-                    bgImageKey: data.bgImageKey
-                };
                 if (data.type === 'turnMarker') {
-                    createTurnMarker(id, data.turn, skip_save=true); // Turn marker always goes to main shelf
-                } else { // It's a character
-                    createCharacter(data.name, data.hp, data.totalHp || data.hp, data.statuses, data.notes, options, skip_save=true);
+                    createTurnMarker(id, data.turn, true);
+                } else {
+                    let bgImageUrl = '';
+                    if (data.bgImageKey && data.bgImageKey.startsWith('indexeddb://')) {
+                        const blob = await loadImageFromIndexedDB(data.bgImageKey).catch(e => console.error(e));
+                        if(blob) bgImageUrl = URL.createObjectURL(blob);
+                    } else if (data.bgImageKey) {
+                        bgImageUrl = data.bgImageKey;
+                    }
+
+                    createCharacter({
+                        ...data,
+                        id: id,
+                        parent: targetParent,
+                        // This property isn't stored, but needed for rendering
+                        bgImageUrl: bgImageUrl 
+                    }, true);
                 }
-            });
+            }
         }
 
         async function loadState() {
             try {
                 shelf.innerHTML = '';
                 compendiumShelfInner.innerHTML = '';
+                characterRegistry.clear();
                 colorIndex = 0;
 
                 await loadItemsToShelf('initiativeOrder', shelf);
@@ -1148,8 +1222,6 @@
                 console.log('State loaded from IndexedDB and localStorage.');
                 updateActionButtonsState();
                 
-                // NEW: Return granular counts by checking the DOM after loading.
-                // This is the key part of the fix.
                 return {
                     initiativeCount: shelf.children.length,
                     compendiumCount: compendiumShelfInner.children.length
@@ -1157,7 +1229,6 @@
 
             } catch (e) {
                 console.error("Failed to load or parse state:", e);
-                // On failure, return zero counts to allow default scene to load.
                 return { initiativeCount: 0, compendiumCount: 0 };
             }
         }
@@ -1197,6 +1268,7 @@
 
         function initializeDraggable(item) {
             item.setAttribute('draggable', true);
+            
             item.addEventListener('dragstart', (e) => {
                 if (!item.classList.contains('highlighted')) {
                     document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
@@ -1205,81 +1277,59 @@
                         refreshCompendiumLayout();
                     }
                 }
-
                 item.dataset.originalParentId = item.parentElement.id;
                 item.dataset.originalNextSiblingId = item.nextSibling ? item.nextSibling.id : 'null';
+                // Use a slight delay to ensure the browser has registered the drag before applying the class
                 setTimeout(() => item.classList.add('dragging'), 0);
             });
 
             item.addEventListener('dragend', (e) => {
                 item.classList.remove('dragging');
-                const newParent = item.parentElement;
+
                 const originalParentId = item.dataset.originalParentId;
+                if (!originalParentId) return; // Drag was likely cancelled
 
-                if (newParent.id === 'shelf-items' && originalParentId === 'compendium-shelf-inner') {
-                    item.style.position = '';
-                    item.style.top = '';
-                    item.style.left = '';
-                    item.style.transform = '';
-                    item.style.zIndex = '';
-                }
+                const newParent = item.parentElement;
 
-                if (newParent && originalParentId && newParent.id !== originalParentId && !item.id.startsWith('turn-marker')) {
-
-                    // When dragging a character from compendium to shelf, create a new copy
-                    // Instead of moving the existing element, which belongs to compendium state
-                    const originalItemData = {
-                        name: item.querySelector('.font-bold.text-lg').textContent.trim(),
-                        hp: item.querySelector('.current-hp').textContent.trim(),
-                        totalHp: item.querySelector('.total-hp').textContent.trim(),
-                        statuses: Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent),
-                        notes: item.dataset.notes || '',
-                        backgroundColorClass: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
-                        backgroundImage: item.style.backgroundImage.slice(5, -2).replace(/["']/g, ""),
-                        bgImageKey: item.dataset.bgImageKey || '',
-                        // Do NOT pass original ID, it needs a new ID for the main shelf instance
-                        // id: item.id
-                    };
+                // This logic now correctly handles a "copy" when an item is dragged between shelves.
+                if (newParent && originalParentId !== newParent.id && item.id.startsWith('char-')) {
                     
-                    // Create a new character on the target shelf
-                    // The 'item' that was dragged is automatically re-inserted by the browser,
-                    // we remove it to keep the compendium tidy and insert the new copy.
-                    // This creates a "copy on drag" behavior.
-                    if (originalParentId != newParent.id) {
-                        // The dragged item is already where it should be after drop, remove the original
-                        // and then recreate the original. This effectively "copies" the item.
+                    // `item` is the DOM element that the browser MOVED. It still has the original ID.
+                    const originalCharacterInstance = characterRegistry.get(item.id);
+
+                    if (originalCharacterInstance) {
+                        // Get a clean data object from the original character instance.
+                        const characterData = originalCharacterInstance.toJSON();
+
+                        // 1. We must restore the original character because it was moved from its home.
+                        const originalParentEl = document.getElementById(originalParentId);
+                        const originalNextSiblingEl = (item.dataset.originalNextSiblingId && item.dataset.originalNextSiblingId !== 'null') ? document.getElementById(item.dataset.originalNextSiblingId) : null;
                         
-                        const tempId = item.id; // Store original ID before it changes
-                        const tempOriginalParent = document.getElementById(originalParentId);
-                        const tempOriginalNextSibling = (item.dataset.originalNextSiblingId && item.dataset.originalNextSiblingId !== 'null') ? document.getElementById(item.dataset.originalNextSiblingId) : null;
-                        
-                        // The item 'item' is now on the shelf. Give it a new ID.
-                        item.id = `char-${crypto.randomUUID()}`;
-                        
-                        // Recreate the original item at its original position
-                        createCharacter(
-                            originalItemData.name,
-                            originalItemData.hp,
-                            originalItemData.totalHp,
-                            originalItemData.statuses,
-                            originalItemData.notes,
-                            {
-                                id: tempId, // Use the original ID for the compendium copy
-                                backgroundColorClass: originalItemData.backgroundColorClass,
-                                backgroundImage: originalItemData.backgroundImage,
-                                bgImageKey: originalItemData.bgImageKey,
-                                parent: tempOriginalParent,
-                                insertBeforeSibling: tempOriginalNextSibling
-                            }
-                        );
+                        // Re-create the original by calling createCharacter. This re-uses the existing class instance and creates a new DOM element for it.
+                        createCharacter({ ...characterData, id: originalCharacterInstance.id, parent: originalParentEl, insertBeforeSibling: originalNextSiblingEl }, true);
+
+                        // 2. The `item` that was moved is now a ghost. We destroy it and create a proper new copy in its place.
+                        const dropTargetInfo = {
+                            parent: item.parentElement,
+                            insertBeforeSibling: item.nextElementSibling
+                        };
+                        item.remove(); // Remove the moved element.
+
+                        // Create a brand new character (new ID, new instance) at the drop location.
+                        createCharacter({ ...characterData, parent: dropTargetInfo.parent, insertBeforeSibling: dropTargetInfo.insertBeforeSibling });
                     }
+                } else {
+                    // This was a drag within the same container (a re-order), so just save.
+                    saveState();
                 }
 
+                // Clean up the temporary data attributes
                 delete item.dataset.originalParentId;
                 delete item.dataset.originalNextSiblingId;
 
-                refreshCompendiumLayout();
-                saveState();
+                if (newParent?.id === 'compendium-shelf-inner' || originalParentId === 'compendium-shelf-inner') {
+                    refreshCompendiumLayout();
+                }
             });
         }
 
@@ -1313,36 +1363,47 @@
             });
         }
 
-        function initializeHpField(hpSpan) {
-            const parentCard = hpSpan.closest('.character-card');
-            hpSpan.addEventListener('focus', () => hpSpan.dataset.originalHp = hpSpan.textContent.trim());
+        function initializeEditableFields(cardElement) {
+            const fields = [
+                { selector: '.font-bold.text-lg', property: 'name' },
+                { selector: '.current-hp', property: 'hp' },
+                { selector: '.total-hp', property: 'totalHp' },
+                { selector: '.initiative-value', property: 'initiative' },
+                { selector: '.initiative-bonus', property: 'initiativeBonus' },
+            ];
 
-            const resolveHp = () => {
-                const expression = hpSpan.textContent.trim();
-                let newHp;
-                try {
-                    newHp = new Function('return (' + expression.replace(/[^-()\d/*+.]/g, '') + ')')();
-                } catch (e) { newHp = parseInt(expression, 10) || 0; }
-                hpSpan.textContent = Math.round(newHp);
-                updateCharacterHpDisplay(parentCard);
-                saveState();
-            };
+            fields.forEach(({ selector, property }) => {
+                const span = cardElement.querySelector(selector);
+                if (!span) return;
 
-            hpSpan.addEventListener('blur', resolveHp);
-            hpSpan.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') { e.preventDefault(); resolveHp(); hpSpan.blur(); }
-                else if (e.key === 'Escape') {
-                    hpSpan.textContent = hpSpan.dataset.originalHp;
-                    updateCharacterHpDisplay(parentCard);
-                    hpSpan.blur();
-                }
+                const resolveChange = () => {
+                    const character = Character.fromElement(cardElement);
+                    if (character) {
+                        let value = span.textContent.trim();
+                        // Special handling for the name to prevent it from being completely empty
+                        if (property === 'name') {
+                            character.name = value;
+                        } else {
+                            try {
+                                const calculatedValue = new Function('return ' + value.replace(/[^-()\d/*+.]/g, ''))();
+                                character[property] = isNaN(calculatedValue) ? 0 : Math.round(calculatedValue);
+                            } catch (e) {
+                                character[property] = parseInt(value, 10) || 0;
+                            }
+                        }
+                        character.render();
+                        saveState();
+                    }
+                };
+
+                span.addEventListener('blur', resolveChange);
+                span.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        span.blur();
+                    }
+                });
             });
-
-            const nameSpan = hpSpan.closest('.draggable').querySelector('.font-bold.text-lg');
-            if (nameSpan) {
-                nameSpan.addEventListener('blur', saveState);
-                nameSpan.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }});
-            }
         }
 
         function initializeContextMenu(item) {
@@ -1537,86 +1598,77 @@
         }
 
 
-        function createCharacter(name, hp, totalHp, statuses = [], notes = '', options = {}, skip_save = false) {
-            const {
-                id = null, insertionElement = null, backgroundColorClass = null,
-                backgroundImage = '', bgImageKey = '', parent = shelf,
-                insertBeforeSibling = null
-            } = options;
+        function createCharacter(options, skip_save = false) {
+            const character = new Character(options);
+            characterRegistry.set(character.id, character);
 
             const newItem = document.createElement('div');
-            newItem.id = id || `char-${crypto.randomUUID()}`;
-            newItem.classList.add('character-card', 'draggable');
-
-            const newColor = backgroundColorClass || colorPalette[colorIndex++ % colorPalette.length];
-            newItem.classList.add(...newColor.split(' '));
-            newItem.classList.add('rounded-md', 'w-32', 'min-h-56', 'shadow-lg', 'flex', 'flex-col', 'justify-between', 'p-2', 'text-white');
-
-            newItem.dataset.notes = notes;
-            newItem.dataset.bgImageKey = bgImageKey;
-
-            if (backgroundImage) newItem.style.backgroundImage = `url('${backgroundImage}')`;
-
-            const nameContent = name || '';
-            const namePlaceholder = name ? '' : 'data-placeholder="Name"';
+            newItem.id = character.id;
+            newItem.classList.add('character-card', 'draggable', 'rounded-md', 'w-40', 'min-h-64', 'shadow-lg', 'flex', 'flex-col', 'justify-between', 'p-2', 'text-white');
+            
+            const namePlaceholder = character.name ? '' : 'data-placeholder="Name"';
 
             newItem.innerHTML = `
                 <div class="flex flex-col items-center flex-shrink-0">
-                    <span contenteditable="true" class="font-bold text-lg p-1 text-center text-readable" ${namePlaceholder}>${nameContent}</span>
+                    <span contenteditable="true" class="font-bold text-lg p-1 text-center text-readable break-words" ${namePlaceholder}>${character.name}</span>
                     <div class="flex flex-col items-center mt-2">
                         <span class="hp-header text-xs font-semibold text-white/80 select-none text-readable">HP</span>
                         <div class="hp-display-container">
                             <div class="hp-standard-view flex items-baseline justify-center">
-                                <span contenteditable="true" class="current-hp text-2xl font-mono p-1 text-readable">${hp}</span>
+                                <span contenteditable="true" class="current-hp text-2xl font-mono p-1 text-readable">${character.hp}</span>
                                 <span class="mx-1 text-white/80">/</span>
-                                <span contenteditable="true" class="total-hp text-2xl font-mono p-1 text-readable">${totalHp}</span>
+                                <span contenteditable="true" class="total-hp text-2xl font-mono p-1 text-readable">${character.totalHp}</span>
                             </div>
                             <div class="hp-damage-view hidden text-center h-9 flex items-center justify-center">
                                 <span class="damage-text text-lg font-semibold p-1 text-readable text-red-300"></span>
                             </div>
                         </div>
                     </div>
+                    <div class="flex flex-col items-center mt-1">
+                        <span class="text-xs font-semibold text-white/80 select-none text-readable">Initiative</span>
+                        <div class="flex items-baseline justify-center">
+                            <span contenteditable="true" class="initiative-value text-xl font-mono p-1 text-readable">${character.initiative}</span>
+                            <div class="flex items-baseline">
+                                <span class="mx-1 text-white/80">(</span>
+                                <span contenteditable="true" class="initiative-bonus text-base font-mono p-1 text-readable">${character.initiativeBonus}</span>
+                                <span class="text-white/80">)</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2"></div>
+                <div class="status-container w-full flex-grow mt-2 p-1 flex flex-wrap items-center justify-center content-start gap-2 overflow-y-auto"></div>
                 <div class="absolute bottom-1 right-1 notes-indicator text-lg" style="display: none;">📝</div>
             `;
 
-            const statusContainer = newItem.querySelector('.status-container');
-            statuses.forEach(symbol => {
-                 const statusIcon = document.createElement('span');
-                 statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
-                 statusIcon.textContent = symbol;
-                 statusContainer.appendChild(statusIcon);
-            });
-
-            updateNotesIndicator(newItem);
-            initializeHpField(newItem.querySelector('.current-hp'));
-            initializeHpField(newItem.querySelector('.total-hp'));
-            updateCharacterHpDisplay(newItem); // Apply current HP visibility state
-            initializeDraggable(newItem);
-            initializeSelectable(newItem);
-            initializeContextMenu(newItem);
-
-            if (parent.id === 'compendium-shelf-inner') {
-                newItem.style.position = 'absolute';
-            }
-
-            if (insertBeforeSibling) {
-                parent.insertBefore(newItem, insertBeforeSibling);
-            } else if (insertionElement) {
-                insertionElement.after(newItem);
+            // Add the new element to the DOM *before* rendering it.
+            const parent = options.parent || shelf;
+            if (options.insertBeforeSibling) {
+                parent.insertBefore(newItem, options.insertBeforeSibling);
+            } else if (options.insertionElement) {
+                options.insertionElement.after(newItem);
             } else {
                 parent.appendChild(newItem);
             }
 
-            if (!options.id) { // Only animate and save if it's a newly created item
+            // Now that the element is in the DOM, call render to apply data.
+            character.render(); 
+
+            // Initialize event listeners
+            initializeDraggable(newItem);
+            initializeSelectable(newItem);
+            initializeContextMenu(newItem);
+            initializeEditableFields(newItem); 
+            
+            if (parent.id === 'compendium-shelf-inner') {
+                newItem.style.position = 'absolute';
+                refreshCompendiumLayout();
+            }
+
+            if (!options.id) { 
                 newItem.classList.add('pop-in-animation');
                 newItem.addEventListener('animationend', () => newItem.classList.remove('pop-in-animation'), { once: true });
             }
-            // Ensure compendium layout is refreshed if adding to it, even if not animating
-            if (parent.id === 'compendium-shelf-inner') {
-                refreshCompendiumLayout();
-            }
+            
             if (!skip_save) {
                 saveState();
             }
@@ -1658,25 +1710,34 @@
                 const symbolButton = document.createElement('button');
                 symbolButton.className = "relative text-3xl p-4 rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500";
 
-                const allHaveStatus = Array.from(selectedItems).every(item => Array.from(item.querySelectorAll('.status-container span')).some(s => s.textContent === symbol));
+                const allHaveStatus = Array.from(selectedItems).every(item => {
+                    const char = Character.fromElement(item);
+                    return char && char.statuses.includes(symbol);
+                });
+
                 if (allHaveStatus) symbolButton.classList.add('symbol-selected');
 
                 symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${(statusSymbols.indexOf(symbol) + 1) % 10}</span>`;
 
                 symbolButton.addEventListener('click', () => {
                     selectedItems.forEach(item => {
-                        const statusContainer = item.querySelector('.status-container');
+                    
+                        const character = Character.fromElement(item);
+                        if (!character) return;
+
                         if (allHaveStatus) {
-                            statusContainer.querySelectorAll('span').forEach(icon => {
-                                if (icon.textContent === symbol) icon.remove();
-                            });
-                        } else if (!Array.from(statusContainer.querySelectorAll('span')).some(s => s.textContent === symbol)) {
-                            const statusIcon = document.createElement('span');
-                            statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
-                            statusIcon.textContent = symbol;
-                            statusContainer.appendChild(statusIcon);
+                            // Remove the status from the instance's array.
+                            character.statuses = character.statuses.filter(s => s !== symbol);
+                        } else {
+                            // Add the status if it doesn't already exist.
+                            if (!character.statuses.includes(symbol)) {
+                                character.statuses.push(symbol);
+                            }
                         }
+                        // Re-render the card from the updated instance data.
+                        character.render();
                     });
+                    // The modal needs to be repopulated to reflect the new state (e.g., checkmarks).
                     populateSymbolModal(selectedItems);
                     saveState();
                 });
@@ -1802,8 +1863,7 @@
                 const result = parseAndRoll(diceExpression);
 
                 if (result !== null) {
-                    // THE FIX: Use the same rich HTML formatting as the /roll command.
-                    const finalLogMessage = `Rolled <strong><span class="math-inline">${result.expression}</strong\> &rarr; <strong class\="text\-xl text\-yellow\-300"\></span>${result.total}</strong>` + 
+                    const finalLogMessage = `Rolled <strong>${result.expression}</strong> &rarr; <strong class="text-xl text-yellow-300">${result.total}</strong>` + 
                                         (result.breakdown ? `<br><span class="text-gray-400 text-xs">${result.breakdown}</span>` : '');
                     addLogEntry(finalLogMessage, true);
 
@@ -1819,30 +1879,31 @@
 
             if (isInEditMode) {
                 // --- We are clicking "Save" ---
-                // THE FIX IS HERE: Use .innerHTML for a contenteditable div.
                 const rawNotes = document.getElementById('notes-edit-content').innerHTML;
 
-                // Update the view pane with the new, processed content
-                const processedNotes = makeDiceRollsClickable(rawNotes);
-                document.getElementById('notes-view-content').innerHTML = processedNotes;
-
-                // Save the raw, clean HTML to the dataset for each selected character
                 document.querySelectorAll('.highlighted').forEach(item => {
-                    item.dataset.notes = rawNotes;
-                    updateNotesIndicator(item); // Update the 📝 indicator
+                    const character = Character.fromElement(item);
+                    if (character) {
+                        character.notes = rawNotes; // Update the instance property.
+                        character.render(); // Re-render to sync the dataset and notes indicator.
+                    }
                 });
 
-                saveState(); // Persist the changes
+                saveState(); // Persist all changes.
 
-                // Switch back to view mode
+                // Switch UI back to view mode.
                 notesModal.classList.remove('edit-mode');
                 notesToggleEditBtn.textContent = 'Edit';
+                
+                // Update the view pane with the clickable version of the notes we just saved.
+                document.getElementById('notes-view-content').innerHTML = makeDiceRollsClickable(rawNotes);
 
             } else {
                 // --- We are clicking "Edit" ---
-                // Switch to edit mode
                 notesModal.classList.add('edit-mode');
                 notesToggleEditBtn.textContent = 'Save';
+                // Focus the editor
+                setTimeout(() => document.getElementById('notes-edit-content').focus(), 0);
             }
         });
         addStatusButton.addEventListener('click', handleStatusModalToggle);
@@ -1884,37 +1945,31 @@
         manageCompendiumDataBtn.addEventListener('click', async () => {
             const compendiumItems = Array.from(compendiumShelfInner.children);
             const exportDataPromises = compendiumItems.map(async item => {
-                let imageKey = item.dataset.bgImageKey || '';
-                // Only include the image URL if it's not an IndexedDB key
-                let exportedImage = '';
-                if (imageKey && !imageKey.startsWith('indexeddb://')) {
-                    exportedImage = imageKey;
-                }
-                 // If it's an IndexedDB key, try to convert it to base64 for export
-                if (imageKey.startsWith('indexeddb://')) {
-                    const blob = await loadImageFromIndexedDB(imageKey);
+                const character = Character.fromElement(item);
+                if (!character) return null;
+
+                // Get the base data object from the instance
+                const characterData = character.toJSON();
+
+                // Handle image export separately by converting stored images to base64
+                let exportedImage = characterData.bgImageKey || '';
+                if (exportedImage.startsWith('indexeddb://')) {
+                    const blob = await loadImageFromIndexedDB(exportedImage);
                     if (blob) {
                         exportedImage = await new Promise((resolve) => {
                             const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result);
+                            reader.onloadend = () => resolve(reader.result); // Converts to base64 data URL
                             reader.readAsDataURL(blob);
                         });
                     }
                 }
-
-
-                return {
-                    name: item.querySelector('.font-bold.text-lg').textContent.trim(),
-                    hp: item.querySelector('.current-hp').textContent.trim(),
-                    totalHp: item.querySelector('.total-hp').textContent.trim(),
-                    statuses: Array.from(item.querySelectorAll('.status-container span')).map(s => s.textContent),
-                    bgColor: Array.from(item.classList).find(cls => colorPalette.includes(cls)) || '',
-                    bgImageKey: exportedImage, // Use the exported image or empty string
-                    notes: item.dataset.notes || ''
-                };
+                // Overwrite the bgImageKey with the URL or base64 string for portability
+                characterData.bgImageKey = exportedImage;
+                return characterData;
             });
 
-            const exportData = await Promise.all(exportDataPromises);
+            // Filter out any nulls that might have occurred if an item wasn't found
+            const exportData = (await Promise.all(exportDataPromises)).filter(Boolean);
             const jsonString = JSON.stringify(exportData, null, 2);
             compendiumDataTextarea.value = jsonString;
             compendiumDataTextarea.dataset.originalValue = jsonString;
@@ -1930,54 +1985,47 @@
                     const importData = JSON.parse(currentJson);
                     if (!Array.isArray(importData)) throw new Error("Data must be an array.");
 
-                    // Clear existing compendium and associated images
+                    // Clear existing compendium items and their associated data
                     const currentCompendiumItems = Array.from(compendiumShelfInner.children);
                     for (const item of currentCompendiumItems) {
-                        if (item.dataset.bgImageKey && item.dataset.bgImageKey.startsWith('indexeddb://')) {
-                            await deleteImageFromIndexedDB(item.dataset.bgImageKey);
+                        const character = Character.fromElement(item);
+                        if (character) {
+                            if (character.bgImageKey && character.bgImageKey.startsWith('indexeddb://')) {
+                                await deleteImageFromIndexedDB(character.bgImageKey);
+                            }
+                            await deleteCharacterFromIndexedDB(character.id);
+                            characterRegistry.delete(character.id);
                         }
-                        await deleteCharacterFromIndexedDB(item.id);
                     }
                     compendiumShelfInner.innerHTML = '';
-
 
                     // Import new data
                     for (const charData of importData) {
                         let actualBgImageKey = charData.bgImageKey || '';
-                        let displayBgImage = actualBgImageKey;
-
+                        
+                        // If the image is a base64 string, convert it back to a blob and save to IndexedDB
                         if (actualBgImageKey.startsWith('data:image/')) {
-                            // If it's a base64 string, convert to Blob and save to IndexedDB
                             try {
                                 const blob = await (await fetch(actualBgImageKey)).blob();
                                 const newImageId = `indexeddb://${crypto.randomUUID()}`;
                                 await saveImageToIndexedDB(newImageId, blob);
-                                actualBgImageKey = newImageId; // Update the key to reference IndexedDB
-                                displayBgImage = URL.createObjectURL(blob); // For display
+                                actualBgImageKey = newImageId; // The new key references IndexedDB
                             } catch (e) {
-                                console.error("Error converting base64 image to Blob for IndexedDB:", e);
-                                actualBgImageKey = ''; // Clear if conversion fails
-                                displayBgImage = '';
+                                console.error("Error processing base64 image for IndexedDB:", e);
+                                actualBgImageKey = '';
                             }
                         }
-
-                        createCharacter(
-                            charData.name,
-                            charData.hp,
-                            charData.totalHp,
-                            charData.statuses,
-                            charData.notes,
-                            {
-                                parent: compendiumShelfInner,
-                                backgroundColorClass: charData.bgColor,
-                                backgroundImage: displayBgImage,
-                                bgImageKey: actualBgImageKey
-                            }
-                        );
+                        
+                        // THE FIX: Use the correct object-based signature for createCharacter
+                        createCharacter({
+                            ...charData, // Spread all properties from the imported data object
+                            bgImageKey: actualBgImageKey, // Use the potentially new image key
+                            parent: compendiumShelfInner
+                        }, true); // skip_save = true
                     }
 
                     refreshCompendiumLayout();
-                    saveState();
+                    saveState(); // Save the final new state
 
                 } catch (e) {
                     console.error("Failed to import compendium data:", e);
@@ -2020,35 +2068,31 @@
          */
         function importCharacterData(data, source = 'unknown') {
             if (!Array.isArray(data)) {
-                console.error(`Data from ${source} is not an array. Expected an array of character objects.`);
-                alert(`Data format from '${source}' is incorrect. Expected an array of character objects.`);
-                return;
+                console.error(`Data from ${source} is not an array.`);
+                alert(`Data format from '${source}' is incorrect.`);
+                return 0;
             }
 
             data.forEach(charData => {
-                const name = charData.name || 'Unnamed Character';
-                const hp = charData.hp || '10';
-                const totalHp = charData.totalHp || charData.hp || '10';
-                const statuses = Array.isArray(charData.statuses) ? charData.statuses : [];
-                const notes = charData.notes || '';
-                const bgColor = charData.bgColor || '';
-                const bgImageKey = charData.bgImageKey || '';
-
-                createCharacter(
-                    name, hp, totalHp, statuses, notes,
-                    {
-                        parent: compendiumShelfInner,
-                        backgroundColorClass: bgColor,
-                        backgroundImage: bgImageKey,
-                        bgImageKey: bgImageKey
-                    },
-                    skip_save = true // Don't save immediately, we'll do it after all items are added
-                );
+                // THE FIX: Use the correct object-based signature for createCharacter
+                createCharacter({
+                    name: charData.name || 'Unnamed Character',
+                    hp: charData.hp || '10',
+                    totalHp: charData.totalHp || charData.hp || '10',
+                    statuses: Array.isArray(charData.statuses) ? charData.statuses : [],
+                    notes: charData.notes || '',
+                    bgColor: charData.bgColor || '',
+                    bgImageKey: charData.bgImageKey || '',
+                    initiative: charData.initiative || '',
+                    initiativeBonus: charData.initiativeBonus || '',
+                    parent: compendiumShelfInner
+                }, true); // skip_save = true
             });
 
             refreshCompendiumLayout();
             saveState();
             console.log(`Character data imported successfully from ${source}!`);
+            return data.length; // Return the number of items imported
         }
 
         // Event listener for the DND 5e button
@@ -2092,27 +2136,18 @@
             if (selectedCompendiumCharacters.length > 0) {
                 // Create copies of selected compendium characters on the main shelf
                 selectedCompendiumCharacters.forEach(original => {
-                    const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
-                    const hp = original.querySelector('.current-hp').textContent.trim();
-                    const totalHp = original.querySelector('.total-hp').textContent.trim();
-                    const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
-                    const notes = original.dataset.notes || '';
-                    const bgImageKey = original.dataset.bgImageKey || '';
-                    const bgStyle = original.style.backgroundImage;
-
-                    createCharacter(
-                        originalName, hp, totalHp, statuses, notes,
-                        {
-                            parent: shelf, // Add to main shelf
-                            backgroundColorClass: Array.from(original.classList).find(cls => colorPalette.includes(cls)) || '',
-                            backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/["']/g, '') : '',
-                            bgImageKey: bgImageKey
-                        }
-                    );
+                    const characterInstance = Character.fromElement(original);
+                    if (characterInstance) {
+                        const characterData = characterInstance.toJSON();
+                        // Create a new character on the main shelf with the copied data
+                        createCharacter({
+                            ...characterData,
+                            parent: shelf
+                        });
+                    }
                 });
-            } else {
-                // No compendium characters selected, create a blank one
-                createCharacter('', 10, 10, [], '', {});
+            } else  {
+                createCharacter({ parent: shelf });
             }
         }
 
@@ -2152,54 +2187,51 @@
             if (originals.length === 0) return;
 
             originals.forEach(original => {
+                // Step 1: Explicitly get the instance of the character we want to copy.
+                const characterToCopy = Character.fromElement(original);
+                if (!characterToCopy) return;
+
                 const parentShelf = original.closest('#shelf-items, #compendium-shelf-inner');
-                const originalName = original.querySelector('.font-bold.text-lg').textContent.trim();
-
+                const originalName = characterToCopy.name;
+                
+                // Determine the base name for the new copy (e.g., "Goblin" from "Goblin 3").
                 const nameMatch = originalName.match(/(.+) (\d+)$/);
-                const baseName = nameMatch ? nameMatch[1] : originalName;
-
+                const baseName = nameMatch ? nameMatch[1].trim() : originalName;
+                
                 const allCharactersOnShelf = Array.from(parentShelf.querySelectorAll('.character-card'));
+                
+                let highestNumberedCharEl = null;
                 let highestNumber = 0;
-                let insertionTarget = original;
 
-                allCharactersOnShelf.forEach(char => {
-                    const charName = char.querySelector('.font-bold.text-lg').textContent.trim();
-                    if (charName.startsWith(baseName)) {
-                        const charMatch = charName.match(/(\d+)$/);
-                        if (charMatch) {
-                            const currentNum = parseInt(charMatch[1], 10);
-                            if (currentNum > highestNumber) {
-                                highestNumber = currentNum;
-                                if (char.parentElement === parentShelf) {
-                                    insertionTarget = char;
-                                }
-                            }
-                        } else if (highestNumber === 0) {
-                            highestNumber = 1;
-                            if (char.parentElement === parentShelf) {
-                                insertionTarget = char;
-                            }
+                // Step 2: Find the highest existing number for that base name.
+                allCharactersOnShelf.forEach(charEl => {
+                    const char = Character.fromElement(charEl);
+                    if (char && char.name.startsWith(baseName)) {
+                        const charMatch = char.name.match(/(\d+)$/);
+                        // Treat "Goblin" as 1 if "Goblin 1" doesn't exist.
+                        const currentNum = charMatch ? parseInt(charMatch[1], 10) : (char.name === baseName ? 1 : 0);
+
+                        if (currentNum > highestNumber) {
+                            highestNumber = currentNum;
+                            highestNumberedCharEl = charEl;
                         }
                     }
                 });
-
-                const newNumber = highestNumber + 1;
-                const newName = `${baseName} ${newNumber}`;
-
-                const hp = original.querySelector('.current-hp').textContent.trim();
-                const totalHp = original.querySelector('.total-hp').textContent.trim();
-                const statuses = Array.from(original.querySelectorAll('.status-container span')).map(s => s.textContent);
-                const notes = original.dataset.notes || '';
-                const bgImageKey = original.dataset.bgImageKey || '';
-                const bgStyle = original.style.backgroundImage;
-
-                const options = {
+                
+                // Step 3: Determine the name and insertion position for the new character.
+                const insertionTarget = highestNumberedCharEl || original;
+                const newName = `${baseName} ${highestNumber + 1}`;
+                
+                // Step 4: Get a clean data object ONLY from the character that was originally selected.
+                const characterDataToCopy = characterToCopy.toJSON();
+                
+                // Step 5: Create the new character with the copied data and the new name.
+                createCharacter({
+                    ...characterDataToCopy,
+                    name: newName,
                     parent: parentShelf,
-                    insertionElement: insertionTarget,
-                    backgroundImage: bgStyle ? bgStyle.substring(5, bgStyle.length - 2).replace(/[""]/g, '') : '',
-                    bgImageKey: bgImageKey
-                };
-                createCharacter(newName, hp, totalHp, statuses, notes, options);
+                    insertionElement: insertionTarget
+                });
             });
         });
 
@@ -2219,8 +2251,14 @@
         });
 
         clearStatusesButton.addEventListener('click', () => {
-             document.querySelectorAll('.highlighted .status-container').forEach(c => c.innerHTML = '');
-             saveState();
+            document.querySelectorAll('.highlighted').forEach(item => {
+                const character = Character.fromElement(item);
+                if (character) {
+                    character.statuses = []; // Clear the array in the instance.
+                    character.render(); // Re-render from the updated instance.
+                }
+            });
+            saveState();
         });
 
         clearAllDataButton.addEventListener('click', async () => {
@@ -2307,9 +2345,7 @@
                     const diceExpression = inputText.substring(6).trim();
                     const result = parseAndRoll(diceExpression);
                     if (result !== null) {
-                        // This creates the rich HTML message for the log.
-                        // The alignment fix is removing the "pl-2" from the breakdown span.
-                        const finalLogMessage = `Rolled <strong><span class="math-inline">${result.expression}</strong\> &rarr; <strong class\="text\-xl text\-yellow\-300"\></span>${result.total}</strong>` + 
+                        const finalLogMessage = `Rolled <strong>${result.expression}</strong> &rarr; <strong class="text-xl text-yellow-300">${result.total}</strong>` + 
                                             (result.breakdown ? `<br><span class="text-gray-400 text-xs">${result.breakdown}</span>` : '');
                         addLogEntry(finalLogMessage, true);
                     }
@@ -2432,7 +2468,7 @@
         });
 
         async function initializeDefaultScene() {
-            // Clear the shelves, but not all oflocalStorage
+            // Clear the shelves, but not all of localStorage
             shelf.innerHTML = '';
             compendiumShelfInner.innerHTML = '';
 
@@ -2441,23 +2477,17 @@
             const goblinNotes = `<p><strong>Goblin</strong><br><em>Small Humanoid (Goblinoid), Neutral Evil</em></p><hr><p><strong>Armor Class</strong> 15 (leather armor, shield)<br><strong>Hit Points</strong> 7 (2d6)<br><strong>Speed</strong> 30 ft.</p><hr><p><strong>STR</strong> 8 (-1) | <strong>DEX</strong> 14 (+2) | <strong>CON</strong> 10 (+0) | <strong>INT</strong> 10 (+0) | <strong>WIS</strong> 8 (-1) | <strong>CHA</strong> 8 (-1)</p><hr><p><strong>Skills</strong> Stealth +6<br><strong>Senses</strong> Darkvision 60 ft., Passive Perception 9<br><strong>Languages</strong> Common, Goblin<br><strong>Challenge</strong> 1/4 (50 XP) | <strong>Proficiency Bonus</strong> +2</p><hr><p><strong><em>Nimble Escape.</em></strong> The goblin can take the Disengage or Hide action as a bonus action on each of its turns.</p><p><strong>Actions</strong><br><strong><em>Scimitar.</em></strong> <em>Melee Weapon Attack:</em> +4 to hit, reach 5 ft., one target. <em>Hit:</em> 5 (1d6 + 2) slashing damage.<br><strong><em>Shortbow.</em></strong> <em>Ranged Weapon Attack:</em> +4 to hit, range 80/320 ft., one target. <em>Hit:</em> 5 (1d6 + 2) piercing damage.</p>`;
             const hectorImageUrl = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQg4hykDiVWaLpgPyX2boVONNK76mugungN3A&s';
 
-            // Create all items with skip_save = true
             createTurnMarker(null, '1', true);
-            const goblinOptions = { bgImageKey: goblinImageUrl, backgroundImage: goblinImageUrl };
-            const hectorOptions = { bgImageKey: hectorImageUrl, backgroundImage: hectorImageUrl };
-            createCharacter('Goblin 1', 7, 7, [], goblinNotes, goblinOptions, true);
-            createCharacter('Goblin 2', 7, 7, [], goblinNotes, goblinOptions, true);
-            createCharacter('Goblin 3', 4, 7, ['❤️‍🩹'], goblinNotes, goblinOptions, true);
-            createCharacter('Hector the Well-Endowed', 18, 18, ['⚡️'], '', hectorOptions, true);
-            createCharacter('Goblin', 7, 7, [], goblinNotes, { ...goblinOptions, parent: compendiumShelfInner }, true);
 
-            // THE FIX: Use the helper function for a properly formatted timestamp.
+            createCharacter({ name: 'Goblin 1', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl }, true);
+            createCharacter({ name: 'Goblin 2', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl }, true);
+            createCharacter({ name: 'Goblin 3', hp: 4, totalHp: 7, statuses: ['❤️‍🩹'], notes: goblinNotes, bgImageKey: goblinImageUrl }, true);
+            createCharacter({ name: 'Hector the Well-Endowed', hp: 18, totalHp: 18, statuses: ['⚡️'], bgImageKey: hectorImageUrl }, true);
+            createCharacter({ name: 'Goblin', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, parent: compendiumShelfInner }, true);
+            
             addLogEntry("Welcome to the Initiative Tracker! (hint, try typing /roll 1d20, or /roll 2d20kh1 for advantage)");
 
-            // Perform one final save after creating all items
             await saveState();
-
-            // Return the specific counts
             return { initiativeCount: 5, compendiumCount: 1 };
         }
 
