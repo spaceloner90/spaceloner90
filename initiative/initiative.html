@@ -420,6 +420,16 @@
             <span>Compendium</span>
         </div>
         <div id="compendium-shelf">
+            <div class="p-2 pt-4 flex flex-col space-y-2">
+                <div class="flex items-center space-x-2">
+                    <label for="min-cr-input" class="text-sm font-medium text-gray-700 flex-shrink-0">Min CR/Level:</label>
+                    <input type="text" id="min-cr-input" placeholder="Min" class="flex-grow p-1 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                </div>
+                <div class="flex items-center space-x-2">
+                    <label for="max-cr-input" class="text-sm font-medium text-gray-700 flex-shrink-0">Max CR/Level:</label>
+                    <input type="text" id="max-cr-input" placeholder="Max" class="flex-grow p-1 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                </div>
+            </div>
              <input type="text" id="compendium-search" placeholder="Search..." class="p-2 m-2 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
              <div id="compendium-shelf-inner-wrapper">
                 <div id="compendium-shelf-inner"></div>
@@ -521,6 +531,8 @@
         const shelf = document.getElementById('shelf-items');
         const compendiumShelf = document.getElementById('compendium-shelf');
         const compendiumShelfInner = document.getElementById('compendium-shelf-inner');
+        const minCrInput = document.getElementById('min-cr-input');
+        const maxCrInput = document.getElementById('max-cr-input');
         const compendiumSearch = document.getElementById('compendium-search');
         const statusModal = document.getElementById('status-modal');
         const closeModalButton = document.getElementById('close-modal-btn');
@@ -559,7 +571,7 @@
         const characterRegistry = new Map();
 
         class Character {
-            constructor({ id, name, hp, totalHp, statuses, notes, initiative, initiativeBonus, bgColor, bgImageKey, parent }) {
+            constructor({ id, name, hp, totalHp, statuses, notes, initiative, initiativeBonus, bgColor, bgImageKey, challenge, parent }) {
                 this.id = id || `char-${crypto.randomUUID()}`;
                 this.name = name || '';
                 this.hp = hp || 10;
@@ -570,6 +582,7 @@
                 this.initiativeBonus = initiativeBonus || 0;
                 this.bgColor = bgColor || colorPalette[colorIndex++ % colorPalette.length];
                 this.bgImageKey = bgImageKey || '';
+                this.challenge = challenge || '';
                 this.parent = parent || shelf;
             }
 
@@ -584,7 +597,8 @@
                     initiative: this.initiative,
                     initiativeBonus: this.initiativeBonus,
                     bgColor: this.bgColor,
-                    bgImageKey: this.bgImageKey
+                    bgImageKey: this.bgImageKey,
+                    challenge: this.challenge
                 };
             }
 
@@ -606,6 +620,7 @@
                 element.querySelector('.initiative-bonus').textContent = this.initiativeBonus;
                 element.dataset.notes = this.notes;
                 element.dataset.bgImageKey = this.bgImageKey;
+                element.dataset.challenge = this.challenge;
 
                 // --- Update Background Color ---
                 const existingColor = Array.from(element.classList).find(cls => colorPalette.includes(cls));
@@ -1587,10 +1602,12 @@
             if(applyFilters) {
                 console.log("Applying filters to compendium items...");
                 const searchTerm = compendiumSearch.value.toLowerCase();
+                const minCr = eval(minCrInput.value);
+                const maxCr = eval(maxCrInput.value);
                 allItems.forEach(item => {
                     const name = item.querySelector('.font-bold.text-lg').textContent.toLowerCase();
-                    const isVisible = name.includes(searchTerm);
-                    if (!isVisible) {
+                    const cr = parseFloat(item.dataset.challenge) || '';
+                    if (!name.includes(searchTerm) || (cr && minCr && cr < minCr) || (cr && maxCr && cr > maxCr)) {
                         item.setAttribute('shouldFilterOut', true);
                     } else {
                         item.removeAttribute('shouldFilterOut');
@@ -2466,6 +2483,12 @@
         compendiumSearch.addEventListener('input',() => {
             refreshCompendiumLayout(applyFilters=true)
         });
+        minCrInput.addEventListener('input',() => {
+            refreshCompendiumLayout(applyFilters=true)
+        });
+        maxCrInput.addEventListener('input',() => {
+            refreshCompendiumLayout(applyFilters=true)
+        });
 
         let isMouseOverCompendium = false;
         compendiumContainer.addEventListener('mouseenter', () => { isMouseOverCompendium = true; });
@@ -2690,11 +2713,11 @@
 
             createTurnMarker(null, '1', true);
 
-            createCharacter({ name: 'Goblin 1', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 16 }, true);
-            createCharacter({ name: 'Goblin 2', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 14 }, true);
-            createCharacter({ name: 'Goblin 3', hp: 4, totalHp: 7, statuses: ['❤️‍🩹'], notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 9 }, true);
-            createCharacter({ name: 'Hector the Well-Endowed', hp: 18, totalHp: 18, statuses: ['⚡️'], bgImageKey: hectorImageUrl, initiativeBonus: -1, initiative: 5 }, true);
-            createCharacter({ name: 'Goblin', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, parent: compendiumShelfInner, initiativeBonus: 2 }, true);
+            createCharacter({ name: 'Goblin 1', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 16, challenge: 0.25 }, true);
+            createCharacter({ name: 'Goblin 2', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 14, challenge: 0.25 }, true);
+            createCharacter({ name: 'Goblin 3', hp: 4, totalHp: 7, statuses: ['❤️‍🩹'], notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 9, challenge: 0.25 }, true);
+            createCharacter({ name: 'Hector the Well-Endowed', hp: 18, totalHp: 18, statuses: ['⚡️'], bgImageKey: hectorImageUrl, initiativeBonus: -1, initiative: 5, challenge: 1 }, true);
+            createCharacter({ name: 'Goblin', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, parent: compendiumShelfInner, initiativeBonus: 2, challenge: 0.25 }, true);
             
             addLogEntry("Welcome to the Initiative Tracker! (hint, try typing /roll 1d20, or /roll 2d20kh1 for advantage)");
 
