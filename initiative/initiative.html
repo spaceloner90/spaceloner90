@@ -1528,8 +1528,13 @@
         });
 
         compendiumShelf.addEventListener('dragover', e => {
-            e.preventDefault(); // This is necessary to allow a drop.
             const draggingItem = document.querySelector('.dragging');
+
+            // If the dragging item is the turn marker, prevent any drop action here.
+            if (draggingItem && draggingItem.id.startsWith('turn-marker')) {
+                return;
+            }
+            e.preventDefault(); // This is necessary to allow a drop.
             if (draggingItem) {
                 // This is the logic that determines where the dragged item should be placed.
                 const afterElement = getDragAfterElement(compendiumShelfInner, e.clientX, e.clientY);
