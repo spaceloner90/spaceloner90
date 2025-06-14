@@ -1544,24 +1544,34 @@
             if (!standardView || !damageView || !damageText || !hpHeader) return;
 
             if (isHpHidden) {
+                // Hide the standard HP view (e.g., "10 / 18")
                 standardView.classList.add('invisible');
                 hpHeader.classList.add('invisible');
 
-                const currentHp = parseInt(characterElement.querySelector('.current-hp').textContent, 10) || 0;
-                const totalHp = parseInt(characterElement.querySelector('.total-hp').textContent, 10) || 0;
+                const character = Character.fromElement(characterElement);
+                if (!character) return; // Safety check
+
+                const currentHp = parseInt(character.hp, 10) || 0;
+                const totalHp = parseInt(character.totalHp, 10) || 0;
                 const damage = totalHp - currentHp;
 
+                // If character is damaged, show the damage text.
                 if (damage > 0) {
                     damageText.textContent = `${damage} damage`;
+                    // To ensure the view is visible, remove both Tailwind's 'hidden' class (display: none)
+                    // and our custom 'invisible' class (opacity: 0).
+                    damageView.classList.remove('hidden');
                     damageView.classList.remove('invisible');
                 } else {
+                    // If character is at full health, hide the damage view.
                     damageText.textContent = '';
-                    damageView.classList.add('invisible'); // Hide if no damage
+                    damageView.classList.add('invisible');
                 }
             } else {
+                // If not in "Hide HP" mode, revert to the standard view.
                 standardView.classList.remove('invisible');
-                damageView.classList.add('invisible');
                 hpHeader.classList.remove('invisible');
+                damageView.classList.add('invisible');
             }
         }
 
