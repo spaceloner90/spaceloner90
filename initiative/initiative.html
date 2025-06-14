@@ -1579,18 +1579,30 @@
             document.querySelectorAll('.character-card').forEach(updateCharacterHpDisplay);
         }
 
-        // --- Compendium Layout Logic (FIXED) ---
-        function refreshCompendiumLayout() {
-            const searchTerm = compendiumSearch.value.toLowerCase();
+        // --- Compendium Layout Logic ---
+        function refreshCompendiumLayout(applyFilters=false) {
             const allItems = Array.from(compendiumShelfInner.children);
             let visibleItems = [];
 
-            // Filter visibility based on search
+            if(applyFilters) {
+                console.log("Applying filters to compendium items...");
+                const searchTerm = compendiumSearch.value.toLowerCase();
+                allItems.forEach(item => {
+                    const name = item.querySelector('.font-bold.text-lg').textContent.toLowerCase();
+                    const isVisible = name.includes(searchTerm);
+                    if (!isVisible) {
+                        item.setAttribute('shouldFilterOut', true);
+                    } else {
+                        item.removeAttribute('shouldFilterOut');
+                    }
+                });
+            }
+
             allItems.forEach(item => {
-                const name = item.querySelector('.font-bold.text-lg').textContent.toLowerCase();
-                const isVisible = name.includes(searchTerm);
-                item.style.display = isVisible ? 'block' : 'none';
-                if (isVisible) {
+                if (item.getAttribute('shouldFilterOut')) {
+                    item.style.display = 'none';
+                } else {
+                    item.style.display = 'block';
                     visibleItems.push(item);
                 }
             });
@@ -2123,11 +2135,15 @@
         });
 
         closeCompendiumDataModalBtn.addEventListener('click', async () => {
-            const currentJson = compendiumDataTextarea.value;
+            let currentJson = compendiumDataTextarea.value;
             const originalJson = compendiumDataTextarea.dataset.originalValue;
 
             if (currentJson !== originalJson) {
                 try {
+                    if (currentJson.trim() === '') {
+                        // Treat empty input as a reset
+                        currentJson = '[]';
+                    }
                     const importData = JSON.parse(currentJson);
                     if (!Array.isArray(importData)) throw new Error("Data must be an array.");
 
@@ -2447,7 +2463,9 @@
             document.body.classList.toggle('compendium-open');
         });
 
-        compendiumSearch.addEventListener('input', refreshCompendiumLayout);
+        compendiumSearch.addEventListener('input',() => {
+            refreshCompendiumLayout(applyFilters=true)
+        });
 
         let isMouseOverCompendium = false;
         compendiumContainer.addEventListener('mouseenter', () => { isMouseOverCompendium = true; });
