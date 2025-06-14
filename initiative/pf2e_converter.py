@@ -198,9 +198,9 @@ def _generate_attributes_html(monster_data):
         speed_display += ", " + ", ".join(other_speeds)
 
     # Perception details
-    perception_mod = monster_data['system']['perception'].get('mod', 'N/A')
+    perception_mod = monster_data['system']['perception'].get('mod', 0)
     perception_senses = _format_pf2_senses(monster_data['system']['perception'].get('senses', []))
-    perception_display = f"+{perception_mod}" if perception_mod is not 'N/A' and perception_mod >= 0 else str(perception_mod) # Format as +X or -X
+    perception_display = f"+{perception_mod}" if perception_mod >= 0 else str(perception_mod) # Format as +X or -X
     if perception_senses and perception_senses != "None":
         perception_display += f"; {perception_senses}"
 
@@ -354,6 +354,7 @@ def _clean_description_html(description_value):
     cleaned_desc = re.sub(r'@Damage\[([^\]]+)\]', lambda m: f"{m.group(1).replace('[', ' ').replace(']', ' ')} damage", cleaned_desc)
     cleaned_desc = re.sub(r'@Localize\[[^\]]+\]', '', cleaned_desc) # Remove localize tags
     cleaned_desc = re.sub(r'\[\[/r ([^\]]+)\]\]', r'(\1)', cleaned_desc) # Replace [[/r 2d6]] with (2d6)
+    cleaned_desc = re.sub(r'\[\[/br (.*?)\]\]', r'(\1)', cleaned_desc) # Replace [[/br ...]] with (...)
 
     # Replace newlines with <br> for HTML display
     cleaned_desc = cleaned_desc.replace('\n', '<br>')
@@ -409,9 +410,11 @@ def _generate_description_block_html(heading_text, items):
             thrown_trait = next((t for t in item['system']['traits'].get('value', []) if 'thrown-' in t), None)
             thrown_range_display = thrown_trait.replace('thrown-', 'range increment ') + ' ft.' if thrown_trait else ""
 
-            # Determine if it's a ranged or melee attack based on weaponType
-            weapon_type = item['system']['weaponType'].get('value', 'melee')
-            attack_type_display = "Melee Attack" if weapon_type == "melee" else "Ranged Attack"
+            # Determine if it's a ranged or melee attack
+            weapon_type = item['system'].get('weaponType', {}).get('value', 'melee')
+            is_ranged_trait = any('range-' in t for t in item['system']['traits'].get('value', [])) or \
+                   any('thrown-' in t for t in item['system']['traits'].get('value', []))
+            attack_type_display = "Ranged Attack" if weapon_type == 'ranged' or is_ranged_trait else "Melee Attack"
 
             strike_line = f"<strong style=\"box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; font-weight: bold;\">{name_display}.</strong> {attack_type_display}: +{bonus} to hit, "
             if reach_display:
@@ -444,7 +447,7 @@ def _generate_description_block_html(heading_text, items):
             
     return f"""
 <div class="mon-stat-block__description-block" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">
-    <div class="mon-stat-block__description-block-heading" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; border-bottom-width: 1px; border-bottom-color: rgb(0, 0, 0); color: rgb(0, 0, 0); font-size: 24px; line-height: 1.4; margin-top: 20px; margin-bottom: 15px;">{heading_text}</div>
+    <div class="mon-stat-block__description-block-heading" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: rgb(0, 0, 0); color: rgb(0, 0, 0); font-size: 24px; line-height: 1.4; margin-top: 20px; margin-bottom: 15px;">{heading_text}</div>
     <div class="mon-stat-block__description-block-content" style="box-sizing: inherit; -webkit-tap-highlight-color: transparent; outline: 0px;">
         {content_html}
     </div>
@@ -582,6 +585,12 @@ def _process_single_monster_file(filepath):
         with open(filepath, 'r', encoding='utf-8') as f:
             monster_data = json.load(f)
         
+        # Omit entry if the name is missing
+        monster_name = monster_data.get('name')
+        if not monster_name:
+            print(f"Skipping {filepath}: monster name is missing.")
+            return None
+
         # Check if it's an 'npc' type as specified
         if monster_data.get('type') != 'npc':
             # print(f"Skipping {filepath}: 'type' is not 'npc'.")
@@ -594,12 +603,16 @@ def _process_single_monster_file(filepath):
         # Get level for 'challenge' field
         level = monster_data['system']['details'].get('level', {}).get('value', 'N/A')
         
+        # Get perception mod for initiative bonus
+        initiative_bonus = monster_data['system']['perception'].get('mod', 0)
+
         converted_monster = {
-            "name": monster_data.get('name', 'Unnamed Monster'),
+            "name": monster_name,
             "hp": str(hp_value),
             "totalHp": str(hp_max),
-            "version": "pf2e", # Set to pf2e as requested
-            "challenge": f"Level {level}", # Set to Level X as requested
+            "initiativeBonus": initiative_bonus,
+            "version": "pf2e", 
+            "challenge": f"Level {level}",
             "notes": format_monster_notes(monster_data)
         }
         return converted_monster
