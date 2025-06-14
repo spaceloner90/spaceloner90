@@ -1656,7 +1656,12 @@
                         // No need to log a failed eval
                     }
                     
-                    if (!name.includes(searchTerm) || (cr && minCr && cr < minCr) || (cr && maxCr && cr > maxCr)) {
+                    // Filtering logic:
+                    const shouldFilterOut = !name.includes(searchTerm) ||
+                                          (!isNaN(minCr) && (isNaN(cr) || cr < minCr)) || // Ensure minCr is a number before comparing
+                                          (!isNaN(maxCr) && (isNaN(cr) || cr > maxCr));    // Ensure maxCr is a number before comparing
+
+                    if (shouldFilterOut) {
                         item.setAttribute('shouldFilterOut', true);
                     } else {
                         item.removeAttribute('shouldFilterOut');
