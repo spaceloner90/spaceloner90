@@ -1345,31 +1345,47 @@
         }
 
         function initializeSelectable(item) {
-             if (!item.classList.contains('character-card')) return;
+            if (!item.classList.contains('character-card')) return;
+
             item.addEventListener('click', (event) => {
+                // Ignore clicks on editable fields or the notes indicator.
                 if (event.target.getAttribute('contenteditable') === 'true' || event.target.closest('.notes-indicator')) return;
 
                 const inCompendium = item.parentElement.id === 'compendium-shelf-inner';
 
-                if (event.shiftKey && !inCompendium) { // Allow shift-select only on main shelf
-                    item.classList.toggle('highlighted');
-                } else {
-                    const isAlreadySelected = item.classList.contains('highlighted');
-                    const selectedCount = document.querySelectorAll('.highlighted').length;
-
-                    if (!inCompendium && isAlreadySelected && selectedCount > 1) {
-                         return;
+                if (event.shiftKey) {
+                    // --- Multi-selection logic (Shift+Click) ---
+                    if (inCompendium) {
+                        // If shift-clicking in compendium, clear all initiative highlights first.
+                        document.querySelectorAll('#shelf-items .highlighted').forEach(el => el.classList.remove('highlighted'));
+                    } else {
+                        // If shift-clicking in initiative, clear all compendium highlights first.
+                        document.querySelectorAll('#compendium-shelf-inner .highlighted').forEach(el => el.classList.remove('highlighted'));
                     }
+                    // Then, toggle the highlight on the clicked item.
+                    item.classList.toggle('highlighted');
 
-                    document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
-                    if (!isAlreadySelected || inCompendium || selectedCount > 1) {
+                } else {
+                    // --- Single selection logic (regular Click) ---
+                    const isAlreadySelected = item.classList.contains('highlighted');
+                    const totalSelected = document.querySelectorAll('.highlighted').length;
+
+                    // First, clear all highlights from both containers.
+                    document.querySelectorAll('.highlighted').forEach(el => el.classList.remove('highlighted'));
+
+                    // If the clicked item wasn't the only one selected, re-highlight it.
+                    // This allows a click on a single selected item to deselect it.
+                    if (!isAlreadySelected || totalSelected > 1) {
                         item.classList.add('highlighted');
                     }
                 }
 
+                // Always refresh compendium layout if it was involved.
                 if (inCompendium) {
                     refreshCompendiumLayout();
                 }
+                
+                // Update the state of the main action buttons.
                 updateActionButtonsState();
             });
         }
@@ -1452,19 +1468,18 @@
         });
 
         compendiumShelf.addEventListener('dragover', e => {
-            e.preventDefault();
+            e.preventDefault(); // This is necessary to allow a drop.
             const draggingItem = document.querySelector('.dragging');
             if (draggingItem) {
-                if (draggingItem.parentElement.id !== 'compendium-shelf-inner') {
-                     draggingItem.style.position = 'absolute';
-                }
+                // This is the logic that determines where the dragged item should be placed.
                 const afterElement = getDragAfterElement(compendiumShelfInner, e.clientX, e.clientY);
+                
+                // This re-orders the element in the DOM in real-time.
                 if (afterElement) {
-                     compendiumShelfInner.insertBefore(draggingItem, afterElement);
+                    compendiumShelfInner.insertBefore(draggingItem, afterElement);
                 } else {
-                     compendiumShelfInner.appendChild(draggingItem);
+                    compendiumShelfInner.appendChild(draggingItem);
                 }
-                refreshCompendiumLayout();
             }
         });
 
@@ -2139,16 +2154,20 @@
         });
 
         function handleAddCharacter() {
-            const selectedCompendiumCharacters = Array.from(compendiumShelfInner.querySelectorAll('.highlighted.character-card'));
+            // Look for any highlighted characters in the compendium.
+            const selectedCompendiumChars = Array.from(compendiumShelfInner.querySelectorAll('.highlighted.character-card'));
 
-            if (selectedCompendiumCharacters.length > 0) {
-                selectedCompendiumCharacters.forEach(originalCompendiumChar => {
-                    const characterToCopy = Character.fromElement(originalCompendiumChar);
-                    // Call the helper, explicitly targeting the main initiative shelf.
-                    duplicateCharacter(characterToCopy, shelf);
+            if (selectedCompendiumChars.length > 0) {
+                // If there are selections, add a copy of each to the main initiative shelf.
+                selectedCompendiumChars.forEach(compendiumChar => {
+                    const characterToCopy = Character.fromElement(compendiumChar);
+                    if (characterToCopy) {
+                        // Use the shared helper function to create a serialized copy.
+                        duplicateCharacter(characterToCopy, shelf);
+                    }
                 });
             } else {
-                // Default behavior: add a new blank character to the main shelf.
+                // If nothing is highlighted in the compendium, add a new blank character.
                 createCharacter({ parent: shelf });
             }
         }
@@ -2376,36 +2395,73 @@
         let isSelecting = false;
         let startX, startY;
         document.body.addEventListener('mousedown', (e) => {
-            if (e.target.closest('.draggable, #compendium-container, #status-modal, #notes-modal, #context-menu, #main-button-container, #compendium-data-modal, #log-container')) return;
+            // Block selection if clicking on specific interactive elements like cards, buttons, or modals.
+            if (e.target.closest('.draggable, button, input, #context-menu, #status-modal, #notes-modal, #compendium-data-modal, #log-container')) {
+                return;
+            }
+            
+            // Check if the click is within one of our valid selection areas.
+            const shelfContainer = e.target.closest('#shelf-items');
+            const compendiumContainerWrapper = e.target.closest('#compendium-shelf-inner-wrapper');
+
+            if (shelfContainer) {
+                // We are selecting in the main initiative row.
+                selectionContainer = shelfContainer;
+            } else if (compendiumContainerWrapper) {
+                // We are selecting in the compendium.
+                selectionContainer = compendiumContainerWrapper.querySelector('#compendium-shelf-inner');
+            } else {
+                // The click was not in a valid area (e.g., page background), so do nothing.
+                selectionContainer = null;
+                return;
+            }
+
+            // If we're in a valid area, prevent default browser behavior and start the selection.
             e.preventDefault();
             isSelecting = true;
             startX = e.clientX; startY = e.clientY;
             Object.assign(selectionBox.style, { left: `${startX}px`, top: `${startY}px`, width: '0px', height: '0px', display: 'block' });
+            
+            // If not holding shift, clear all previous selections before starting a new one.
             if (!e.shiftKey) {
-                document.querySelectorAll('.draggable.highlighted').forEach(el => el.classList.remove('highlighted'));
+                document.querySelectorAll('.highlighted').forEach(el => el.classList.remove('highlighted'));
                 updateActionButtonsState();
             }
         });
         window.addEventListener('mousemove', (e) => {
-            if (!isSelecting) return;
+            // Only run if we are actively selecting in a valid container.
+            if (!isSelecting || !selectionContainer) return;
+
             e.preventDefault();
             const currentX = e.clientX, currentY = e.clientY;
             const width = Math.abs(currentX - startX), height = Math.abs(currentY - startY);
             const left = Math.min(currentX, startX), top = Math.min(currentY, startY);
             Object.assign(selectionBox.style, { width: `${width}px`, height: `${height}px`, left: `${left}px`, top: `${top}px` });
+            
             const boxRect = selectionBox.getBoundingClientRect();
-            document.querySelectorAll('.draggable.character-card').forEach(item => {
+            
+            // THE FIX: Only query for characters within the active container.
+            selectionContainer.querySelectorAll('.draggable.character-card').forEach(item => {
+                // Do not select items hidden by the compendium search filter.
+                if (item.style.display === 'none') return; 
+
                 const itemRect = item.getBoundingClientRect();
                 const isIntersecting = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
-                if (isIntersecting) item.classList.add('highlighted');
-                else if(!e.shiftKey) item.classList.remove('highlighted');
+                
+                if (isIntersecting) {
+                    item.classList.add('highlighted');
+                } else if (!e.shiftKey) { // Only deselect if not holding shift.
+                    item.classList.remove('highlighted');
+                }
             });
+
             updateActionButtonsState();
         });
         window.addEventListener('mouseup', () => {
             if (isSelecting) {
                 isSelecting = false;
                 selectionBox.style.display = 'none';
+                selectionContainer = null; 
             }
         });
 
