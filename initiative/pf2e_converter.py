@@ -600,8 +600,8 @@ def _process_single_monster_file(filepath):
         hp_value = monster_data['system']['attributes']['hp'].get('value', 0)
         hp_max = monster_data['system']['attributes']['hp'].get('max', hp_value) # Use value as fallback if max is not defined
 
-        # Get level for 'challenge' field
-        level = monster_data['system']['details'].get('level', {}).get('value', 'N/A')
+        # Get level for 'challenge' field, defaulting to 0.
+        level = monster_data['system']['details'].get('level', {}).get('value', 0)
         
         # Get perception mod for initiative bonus
         initiative_bonus = monster_data['system']['perception'].get('mod', 0)
@@ -612,7 +612,7 @@ def _process_single_monster_file(filepath):
             "totalHp": str(hp_max),
             "initiativeBonus": initiative_bonus,
             "version": "pf2e", 
-            "challenge": f"Level {level}",
+            "challenge": str(level),
             "notes": format_monster_notes(monster_data)
         }
         return converted_monster
