@@ -580,45 +580,53 @@
             }
 
             // Updates the character's DOM representation from its data
-            render() {
+            async render() {
                 let element = document.getElementById(this.id);
                 if (!element) return null;
 
-                // Update all displayed text fields
+                // --- Update Text and Data ---
                 element.querySelector('.font-bold.text-lg').textContent = this.name;
                 element.querySelector('.current-hp').textContent = this.hp;
                 element.querySelector('.total-hp').textContent = this.totalHp;
                 element.querySelector('.initiative-value').textContent = this.initiative;
                 element.querySelector('.initiative-bonus').textContent = this.initiativeBonus;
-                
                 element.dataset.notes = this.notes;
+                element.dataset.bgImageKey = this.bgImageKey;
 
-                // Update background color
-                // First, remove any existing color classes to prevent conflicts
+                // --- Update Background Color ---
                 const existingColor = Array.from(element.classList).find(cls => colorPalette.includes(cls));
                 if (existingColor) element.classList.remove(existingColor);
                 element.classList.add(this.bgColor);
 
-                // Update background image
-                element.dataset.bgImageKey = this.bgImageKey;
-                // This part needs to be improved to handle image loading logic, but for now it's a placeholder
-                if (this.bgImageKey && this.bgImageKey.startsWith('http')) {
-                    element.style.backgroundImage = `url('${this.bgImageKey}')`;
+                // --- THE FIX: Asynchronously handle background image rendering ---
+                if (this.bgImageKey) {
+                if (this.bgImageKey.startsWith('indexeddb://')) {
+                    // If it's a local file, fetch the blob from the database.
+                    const blob = await loadImageFromIndexedDB(this.bgImageKey);
+                    if (blob) {
+                        // Create a temporary URL and set the style.
+                        element.style.backgroundImage = `url('${URL.createObjectURL(blob)}')`;
+                    }
                 } else {
-                    element.style.backgroundImage = '';
+                    // If it's a regular URL, just use it.
+                    element.style.backgroundImage = `url('${this.bgImageKey}')`;
+                }
+                } else {
+                // If there's no key, clear the background image.
+                element.style.backgroundImage = '';
                 }
 
-                // Update statuses
+                // --- Update Statuses ---
                 const statusContainer = element.querySelector('.status-container');
-                statusContainer.innerHTML = ''; // Clear existing statuses
+                statusContainer.innerHTML = '';
                 this.statuses.forEach(symbol => {
-                    const statusIcon = document.createElement('span');
-                    statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
-                    statusIcon.textContent = symbol;
-                    statusContainer.appendChild(statusIcon);
+                const statusIcon = document.createElement('span');
+                statusIcon.className = "text-xl bg-black bg-opacity-25 p-1 rounded-md cursor-default text-readable";
+                statusIcon.textContent = symbol;
+                statusContainer.appendChild(statusIcon);
                 });
 
-                // Call helper functions to update UI based on the new data
+                // --- Update UI Indicators ---
                 updateNotesIndicator(element);
                 updateCharacterHpDisplay(element);
             }
@@ -1279,55 +1287,58 @@
                 }
                 item.dataset.originalParentId = item.parentElement.id;
                 item.dataset.originalNextSiblingId = item.nextSibling ? item.nextSibling.id : 'null';
-                // Use a slight delay to ensure the browser has registered the drag before applying the class
                 setTimeout(() => item.classList.add('dragging'), 0);
             });
 
             item.addEventListener('dragend', (e) => {
                 item.classList.remove('dragging');
-
                 const originalParentId = item.dataset.originalParentId;
-                if (!originalParentId) return; // Drag was likely cancelled
+                if (!originalParentId) return;
 
                 const newParent = item.parentElement;
 
-                // This logic now correctly handles a "copy" when an item is dragged between shelves.
                 if (newParent && originalParentId !== newParent.id && item.id.startsWith('char-')) {
-                    
-                    // `item` is the DOM element that the browser MOVED. It still has the original ID.
-                    const originalCharacterInstance = characterRegistry.get(item.id);
+                    // This is a COPY operation between different containers.
+                    const characterToCopy = Character.fromElement(item);
 
-                    if (originalCharacterInstance) {
-                        // Get a clean data object from the original character instance.
-                        const characterData = originalCharacterInstance.toJSON();
-
-                        // 1. We must restore the original character because it was moved from its home.
-                        const originalParentEl = document.getElementById(originalParentId);
-                        const originalNextSiblingEl = (item.dataset.originalNextSiblingId && item.dataset.originalNextSiblingId !== 'null') ? document.getElementById(item.dataset.originalNextSiblingId) : null;
-                        
-                        // Re-create the original by calling createCharacter. This re-uses the existing class instance and creates a new DOM element for it.
-                        createCharacter({ ...characterData, id: originalCharacterInstance.id, parent: originalParentEl, insertBeforeSibling: originalNextSiblingEl }, true);
-
-                        // 2. The `item` that was moved is now a ghost. We destroy it and create a proper new copy in its place.
-                        const dropTargetInfo = {
-                            parent: item.parentElement,
-                            insertBeforeSibling: item.nextElementSibling
-                        };
-                        item.remove(); // Remove the moved element.
-
-                        // Create a brand new character (new ID, new instance) at the drop location.
-                        createCharacter({ ...characterData, parent: dropTargetInfo.parent, insertBeforeSibling: dropTargetInfo.insertBeforeSibling });
+                    if (characterToCopy) {
+                        // THE FIX: Any drag between containers now performs an exact copy.
+                        // It gets a clean data object and creates a new character with that exact data.
+                        const exactCopyData = characterToCopy.toJSON();
+                        createCharacter({
+                            ...exactCopyData,
+                            parent: newParent
+                        });
                     }
+
+                    // After copying, we must restore the original element that the browser moved.
+                    const originalParentEl = document.getElementById(originalParentId);
+                    const originalNextSiblingEl = (item.dataset.originalNextSiblingId && item.dataset.originalNextSiblingId !== 'null') ? document.getElementById(item.dataset.originalNextSiblingId) : null;
+                    
+                    if (originalParentEl) {
+                        // Reset inline styles to prevent layout issues.
+                        item.style.position = '';
+                        item.style.top = '';
+                        item.style.left = '';
+                        item.style.transform = '';
+                        item.style.zIndex = '';
+                        
+                        if (originalNextSiblingEl) {
+                            originalParentEl.insertBefore(item, originalNextSiblingEl);
+                        } else {
+                            originalParentEl.appendChild(item);
+                        }
+                    }
+                    
                 } else {
-                    // This was a drag within the same container (a re-order), so just save.
+                    // This was a RE-ORDER operation within the same container. Just save the state.
                     saveState();
                 }
 
-                // Clean up the temporary data attributes
                 delete item.dataset.originalParentId;
                 delete item.dataset.originalNextSiblingId;
 
-                if (newParent?.id === 'compendium-shelf-inner' || originalParentId === 'compendium-shelf-inner') {
+                if (newParent?.id.includes('compendium') || originalParentId.includes('compendium')) {
                     refreshCompendiumLayout();
                 }
             });
@@ -1376,11 +1387,11 @@
                 const span = cardElement.querySelector(selector);
                 if (!span) return;
 
-                const resolveChange = () => {
+                // THE FIX: This function must be async to await the render.
+                const resolveChange = async () => { // <-- async
                     const character = Character.fromElement(cardElement);
                     if (character) {
                         let value = span.textContent.trim();
-                        // Special handling for the name to prevent it from being completely empty
                         if (property === 'name') {
                             character.name = value;
                         } else {
@@ -1391,7 +1402,7 @@
                                 character[property] = parseInt(value, 10) || 0;
                             }
                         }
-                        character.render();
+                        await character.render(); // <-- await
                         saveState();
                     }
                 };
@@ -1716,28 +1727,23 @@
                 });
 
                 if (allHaveStatus) symbolButton.classList.add('symbol-selected');
-
                 symbolButton.innerHTML = `<span class="pointer-events-none">${symbol}</span><span class="absolute bottom-1 right-1 text-xs font-mono bg-gray-600 text-white rounded-sm px-1.5 py-0.5 pointer-events-none">${(statusSymbols.indexOf(symbol) + 1) % 10}</span>`;
 
-                symbolButton.addEventListener('click', () => {
-                    selectedItems.forEach(item => {
-                    
+                // THE FIX: This event listener must be async.
+                symbolButton.addEventListener('click', async () => { // <-- async
+                    for (const item of selectedItems) {
                         const character = Character.fromElement(item);
-                        if (!character) return;
+                        if (!character) continue;
 
                         if (allHaveStatus) {
-                            // Remove the status from the instance's array.
                             character.statuses = character.statuses.filter(s => s !== symbol);
                         } else {
-                            // Add the status if it doesn't already exist.
                             if (!character.statuses.includes(symbol)) {
                                 character.statuses.push(symbol);
                             }
                         }
-                        // Re-render the card from the updated instance data.
-                        character.render();
-                    });
-                    // The modal needs to be repopulated to reflect the new state (e.g., checkmarks).
+                        await character.render(); // <-- await
+                    }
                     populateSymbolModal(selectedItems);
                     saveState();
                 });
@@ -1750,13 +1756,16 @@
             colorPalette.forEach(color => {
                 const swatch = document.createElement('button');
                 swatch.className = `w-8 h-8 rounded-full ${color} border-2 border-white/50 hover:scale-110 transition-transform`;
-                swatch.addEventListener('click', () => {
-                    document.querySelectorAll('.highlighted').forEach(item => {
-                        item.style.backgroundImage = '';
-                        item.dataset.bgImageKey = '';
-                        item.classList.remove(...colorPalette);
-                        item.classList.add(color);
-                    });
+                // THE FIX: This event listener must be async.
+                swatch.addEventListener('click', async () => { // <-- async
+                    for (const item of document.querySelectorAll('.highlighted')) {
+                        const character = Character.fromElement(item);
+                        if (character) {
+                            character.bgImageKey = '';
+                            character.bgColor = color;
+                            await character.render(); // <-- await
+                        }
+                    };
                     contextMenu.classList.add('invisible');
                     saveState();
                 });
@@ -1874,35 +1883,25 @@
             }
         });
         closeNotesModalButton.addEventListener('click', closeNotesModal);
-        notesToggleEditBtn.addEventListener('click', () => {
+        notesToggleEditBtn.addEventListener('click', async () => { // <-- async
             const isInEditMode = notesModal.classList.contains('edit-mode');
-
             if (isInEditMode) {
-                // --- We are clicking "Save" ---
                 const rawNotes = document.getElementById('notes-edit-content').innerHTML;
 
-                document.querySelectorAll('.highlighted').forEach(item => {
+                for (const item of document.querySelectorAll('.highlighted')) {
                     const character = Character.fromElement(item);
                     if (character) {
-                        character.notes = rawNotes; // Update the instance property.
-                        character.render(); // Re-render to sync the dataset and notes indicator.
+                        character.notes = rawNotes;
+                        await character.render(); // <-- await
                     }
-                });
-
-                saveState(); // Persist all changes.
-
-                // Switch UI back to view mode.
+                }
+                saveState();
                 notesModal.classList.remove('edit-mode');
                 notesToggleEditBtn.textContent = 'Edit';
-                
-                // Update the view pane with the clickable version of the notes we just saved.
                 document.getElementById('notes-view-content').innerHTML = makeDiceRollsClickable(rawNotes);
-
             } else {
-                // --- We are clicking "Edit" ---
                 notesModal.classList.add('edit-mode');
                 notesToggleEditBtn.textContent = 'Save';
-                // Focus the editor
                 setTimeout(() => document.getElementById('notes-edit-content').focus(), 0);
             }
         });
@@ -1913,13 +1912,17 @@
         });
         statusModal.addEventListener('click', (e) => { if (e.target === statusModal) statusModal.classList.add('invisible'); });
 
-        applyUrlButton.addEventListener('click', () => {
+        // Fix for the Image URL button
+        applyUrlButton.addEventListener('click', async () => { // <-- async
             const url = imageUrlInput.value.trim();
             if (url) {
-                document.querySelectorAll('.highlighted').forEach(item => {
-                    item.style.backgroundImage = `url('${url}')`;
-                    item.dataset.bgImageKey = url;
-                });
+                for (const item of document.querySelectorAll('.highlighted')) {
+                    const character = Character.fromElement(item);
+                    if (character) {
+                        character.bgImageKey = url;
+                        await character.render(); // <-- await
+                    }
+                };
                 saveState();
             }
             contextMenu.classList.add('invisible');
@@ -1931,15 +1934,21 @@
             if (file) {
                 const imageId = `indexeddb://${crypto.randomUUID()}`;
                 await saveImageToIndexedDB(imageId, file);
-                const objectUrl = URL.createObjectURL(file);
-                document.querySelectorAll('.highlighted').forEach(item => {
-                    item.style.backgroundImage = `url('${objectUrl}')`;
-                    item.dataset.bgImageKey = imageId;
-                });
-                saveState();
+                
+                // THE FIX: Changed from forEach to a for...of loop, which is compatible with await.
+                for (const item of document.querySelectorAll('.highlighted')) {
+                    const character = Character.fromElement(item);
+                    if (character) {
+                        character.bgImageKey = imageId;
+                        // This await is now valid because it's inside an async function's loop.
+                        await character.render();
+                    }
+                }
+                
+                saveState(); // Save the state after all renders are complete.
             }
             contextMenu.classList.add('invisible');
-            e.target.value = null;
+            e.target.value = null; // Clear the input for the next upload.
         });
 
         manageCompendiumDataBtn.addEventListener('click', async () => {
@@ -2129,24 +2138,17 @@
             }
         });
 
-        // Function to handle adding characters, either new or from compendium
         function handleAddCharacter() {
             const selectedCompendiumCharacters = Array.from(compendiumShelfInner.querySelectorAll('.highlighted.character-card'));
 
             if (selectedCompendiumCharacters.length > 0) {
-                // Create copies of selected compendium characters on the main shelf
-                selectedCompendiumCharacters.forEach(original => {
-                    const characterInstance = Character.fromElement(original);
-                    if (characterInstance) {
-                        const characterData = characterInstance.toJSON();
-                        // Create a new character on the main shelf with the copied data
-                        createCharacter({
-                            ...characterData,
-                            parent: shelf
-                        });
-                    }
+                selectedCompendiumCharacters.forEach(originalCompendiumChar => {
+                    const characterToCopy = Character.fromElement(originalCompendiumChar);
+                    // Call the helper, explicitly targeting the main initiative shelf.
+                    duplicateCharacter(characterToCopy, shelf);
                 });
-            } else  {
+            } else {
+                // Default behavior: add a new blank character to the main shelf.
                 createCharacter({ parent: shelf });
             }
         }
@@ -2181,36 +2183,34 @@
             saveState(); // Save state after deletion (important for order persistence)
         });
 
+        /**
+         * Creates a duplicate of a character instance on a specified parent container.
+         * Handles name serialization and assigns a new background color.
+         * @param {Character} characterToCopy - The class instance of the character to duplicate.
+         * @param {HTMLElement} targetParent - The container to add the new character to (e.g., shelf or compendiumShelfInner).
+         */
+        function duplicateCharacter(characterToCopy, targetParent) {
+            if (!characterToCopy || !targetParent) return;
 
-        copyButton.addEventListener('click', () => {
-            const originals = document.querySelectorAll('.highlighted');
-            if (originals.length === 0) return;
+            const originalName = characterToCopy.name;
+            let newName = originalName;
+            let insertionTarget = null; // The element to insert the copy after.
 
-            originals.forEach(original => {
-                // Step 1: Explicitly get the instance of the character we want to copy.
-                const characterToCopy = Character.fromElement(original);
-                if (!characterToCopy) return;
-
-                const parentShelf = original.closest('#shelf-items, #compendium-shelf-inner');
-                const originalName = characterToCopy.name;
-                
-                // Determine the base name for the new copy (e.g., "Goblin" from "Goblin 3").
+            // Only serialize the name if it's not empty. This fixes Bug 1.
+            if (originalName.trim() !== '') {
                 const nameMatch = originalName.match(/(.+) (\d+)$/);
                 const baseName = nameMatch ? nameMatch[1].trim() : originalName;
                 
-                const allCharactersOnShelf = Array.from(parentShelf.querySelectorAll('.character-card'));
-                
+                // Scan the target shelf to find the highest existing number for this name.
+                const allCharactersOnTargetShelf = Array.from(targetParent.querySelectorAll('.character-card'));
                 let highestNumberedCharEl = null;
                 let highestNumber = 0;
 
-                // Step 2: Find the highest existing number for that base name.
-                allCharactersOnShelf.forEach(charEl => {
+                allCharactersOnTargetShelf.forEach(charEl => {
                     const char = Character.fromElement(charEl);
                     if (char && char.name.startsWith(baseName)) {
                         const charMatch = char.name.match(/(\d+)$/);
-                        // Treat "Goblin" as 1 if "Goblin 1" doesn't exist.
                         const currentNum = charMatch ? parseInt(charMatch[1], 10) : (char.name === baseName ? 1 : 0);
-
                         if (currentNum > highestNumber) {
                             highestNumber = currentNum;
                             highestNumberedCharEl = charEl;
@@ -2218,20 +2218,34 @@
                     }
                 });
                 
-                // Step 3: Determine the name and insertion position for the new character.
-                const insertionTarget = highestNumberedCharEl || original;
-                const newName = `${baseName} ${highestNumber + 1}`;
+                insertionTarget = highestNumberedCharEl;
+                newName = `${baseName} ${highestNumber + 1}`;
+            }
+
+            // Get a clean data object. This fixes the data inheritance bug.
+            const characterDataToCopy = characterToCopy.toJSON();
+            // Delete the bgColor so the constructor assigns a new one. This fixes Bug 2.
+            delete characterDataToCopy.bgColor;
+
+            // Create the new character with all the correct data.
+            createCharacter({
+                ...characterDataToCopy,
+                name: newName,
+                parent: targetParent,
+                insertionElement: insertionTarget
+            });
+        }
+
+        copyButton.addEventListener('click', () => {
+            const originals = document.querySelectorAll('.highlighted');
+            if (originals.length === 0) return;
+
+            originals.forEach(original => {
+                const characterToCopy = Character.fromElement(original);
+                const parentShelf = original.closest('#shelf-items, #compendium-shelf-inner');
                 
-                // Step 4: Get a clean data object ONLY from the character that was originally selected.
-                const characterDataToCopy = characterToCopy.toJSON();
-                
-                // Step 5: Create the new character with the copied data and the new name.
-                createCharacter({
-                    ...characterDataToCopy,
-                    name: newName,
-                    parent: parentShelf,
-                    insertionElement: insertionTarget
-                });
+                // The helper function now contains all the complex logic.
+                duplicateCharacter(characterToCopy, parentShelf);
             });
         });
 
@@ -2250,14 +2264,14 @@
             saveState();
         });
 
-        clearStatusesButton.addEventListener('click', () => {
-            document.querySelectorAll('.highlighted').forEach(item => {
+        clearStatusesButton.addEventListener('click', async () => { // <-- async
+            for (const item of document.querySelectorAll('.highlighted')) {
                 const character = Character.fromElement(item);
                 if (character) {
-                    character.statuses = []; // Clear the array in the instance.
-                    character.render(); // Re-render from the updated instance.
+                    character.statuses = [];
+                    await character.render(); // <-- await
                 }
-            });
+            }
             saveState();
         });
 
@@ -2510,10 +2524,18 @@
                 console.error("An error occurred during app initialization:", error);
                 addLogEntry("Error during initialization. State may be incomplete.");
             } finally {
-                // This is GUARANTEED to run, even if an error occurs.
+                // This block runs after all loading is complete.
                 stopLoadingAnimation();
                 updateAllCharacterHpDisplay();
-                refreshCompendiumLayout();
+                refreshCompendiumLayout(); // This function causes the highlight.
+
+                // THE FIX: Explicitly find and un-highlight any selected item in the compendium on load.
+                const highlightedCompendiumItem = compendiumShelfInner.querySelector('.highlighted');
+                if (highlightedCompendiumItem) {
+                    highlightedCompendiumItem.classList.remove('highlighted');
+                    // Ensure the action buttons are correctly disabled since nothing is selected now.
+                    updateActionButtonsState(); 
+                }
             }
         }
 
