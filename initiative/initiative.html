@@ -1890,6 +1890,96 @@
             return turnMarker; // Return the created turn marker
         }
 
+        // Unified function for animating element movement within the shelf
+        function animateShelfMove(itemToMove, targetPosition) {
+            const shelfItems = Array.from(shelf.children);
+            const initialRects = new Map();
+
+            // 1. Capture initial positions before DOM manipulation
+            shelfItems.forEach(item => {
+                initialRects.set(item.id, item.getBoundingClientRect());
+            });
+
+            // 2. Perform DOM manipulation (reorder the element)
+            if (targetPosition === 'start') {
+                shelf.prepend(itemToMove);
+            } else { // 'end'
+                shelf.appendChild(itemToMove);
+            }
+
+            // 3. Invert and Play
+            const updatedShelfItems = Array.from(shelf.children); // Get new order
+            let completedAnimations = 0;
+            const totalItemsToAnimate = updatedShelfItems.length;
+
+            // Calculate the maximum possible delay for any item
+            const maxDelay = (totalItemsToAnimate > 0 ? (totalItemsToAnimate - 1) * 20 : 0);
+            const animationDuration = 300; // Matches the 0.3s transition
+            const totalAnimationTime = animationDuration + maxDelay;
+
+            updatedShelfItems.forEach((item, index) => {
+                const currentRect = item.getBoundingClientRect();
+                const initialRect = initialRects.get(item.id);
+
+                // Only animate items that actually moved or were initially present in the shelf
+                if (initialRect && (initialRect.left !== currentRect.left || initialRect.top !== currentRect.top)) {
+                    const deltaX = initialRect.left - currentRect.left;
+                    const deltaY = initialRect.top - currentRect.top;
+
+                    // Apply inverse transform instantly
+                    item.style.transition = 'none'; // Temporarily remove transition for instant inverse
+                    item.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+
+                    // Force reflow to ensure the instant transform is applied before transition starts
+                    item.offsetHeight; 
+
+                    // Animate to final position with a slight stagger based on its new index
+                    const delay = index * 20; // Stagger by 20ms per item
+                    item.style.transition = `transform ${animationDuration}ms ease ${delay}ms`;
+                    item.style.transform = ''; // Animate back to original (untransformed) state
+
+                    // Attach a transitionend listener to each animating item
+                    const onTransitionEnd = () => {
+                        item.removeEventListener('transitionend', onTransitionEnd); // Remove listener after it fires
+                        completedAnimations++;
+                        // If all expected animations have completed, perform final cleanup
+                        if (completedAnimations === totalItemsToAnimate) {
+                            updatedShelfItems.forEach(cleanupItem => {
+                                cleanupItem.style.transition = ''; 
+                                cleanupItem.style.transform = '';
+                            });
+                        }
+                    };
+                    item.addEventListener('transitionend', onTransitionEnd);
+                } else {
+                    // If an item didn't physically move (e.g., if it's the only item, or if FLIP calculated no change),
+                    // count it as immediately completed so total cleanup can still trigger.
+                    completedAnimations++;
+                }
+            });
+
+            // Fallback cleanup: If for any reason some `transitionend` events are missed,
+            // this timeout will ensure cleanup happens after the longest possible animation duration.
+            if (totalItemsToAnimate === 0) {
+                // No items to animate, perform immediate cleanup
+                updatedShelfItems.forEach(cleanupItem => {
+                    cleanupItem.style.transition = ''; 
+                    cleanupItem.style.transform = '';
+                });
+            } else {
+                setTimeout(() => {
+                    // Only cleanup if it hasn't already been done by the `transitionend` listeners
+                    if (completedAnimations < totalItemsToAnimate) {
+                        console.warn("TransitionEnd fallback cleanup executed. Some animations might not have triggered 'transitionend'.");
+                        updatedShelfItems.forEach(cleanupItem => {
+                            cleanupItem.style.transition = ''; 
+                            cleanupItem.style.transform = '';
+                        });
+                    }
+                }, totalAnimationTime + 50); // Add a small buffer after the total animation time
+            }
+        }
+
         /**
          * Rolls initiative for all characters on the main shelf, sorts them,
          * and logs the results.
@@ -2382,7 +2472,7 @@
         lastTurnButton.addEventListener('click', () => {
             const lastItem = shelf.querySelector('.draggable:last-child');
             if(lastItem) {
-                shelf.insertBefore(lastItem, shelf.firstChild);
+                animateShelfMove(lastItem, 'start');
                 if (lastItem.id.startsWith('turn-marker')) {
                     const counter = lastItem.querySelector('.turn-counter');
                     let currentTurn = parseInt(counter.textContent, 10);
@@ -2395,7 +2485,7 @@
         moveButton.addEventListener('click', () => {
             const firstItem = shelf.querySelector('.draggable');
             if(firstItem) {
-                shelf.appendChild(firstItem);
+                animateShelfMove(firstItem, 'end');
                 if (firstItem.id.startsWith('turn-marker')) {
                     const counter = firstItem.querySelector('.turn-counter');
                     let currentTurn = parseInt(counter.textContent, 10);
