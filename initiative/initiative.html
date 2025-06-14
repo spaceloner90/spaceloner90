@@ -1982,7 +1982,7 @@
 
         /**
          * Rolls initiative for all characters on the main shelf, sorts them,
-         * and logs the results.
+         * and logs the results, animating their final positions.
          */
         async function rollInitiatives() {
             const charactersOnShelf = Array.from(shelf.querySelectorAll('.character-card'));
@@ -1991,10 +1991,17 @@
                 return;
             }
 
+            const initialRects = new Map();
+            // 1. Capture initial positions of all items before any DOM changes
+            const allShelfItems = Array.from(shelf.children);
+            allShelfItems.forEach(item => {
+                initialRects.set(item.id, item.getBoundingClientRect());
+            });
+
             let initiativeRolls = [];
             let tieOccurred = false;
 
-            // 1. Roll initiative for each character
+            // 2. Roll initiative for each character and prepare data for sorting
             for (const charElement of charactersOnShelf) {
                 const character = Character.fromElement(charElement);
                 if (character) {
@@ -2002,7 +2009,6 @@
                     const roll = Math.floor(Math.random() * 20) + 1;
                     character.initiative = roll + bonus;
                     
-                    // Store details for logging and sorting
                     initiativeRolls.push({ 
                         element: charElement, 
                         character: character,
@@ -2010,11 +2016,11 @@
                         log: `<strong>${character.name}</strong> rolled ${character.initiative} (d20: ${roll} + bonus: ${bonus})`
                     });
                     
-                    await character.render(); // Update the card display
+                    await character.render(); // Update the card display with new initiative
                 }
             }
 
-            // 2. Sort characters by initiative, with random tie-breaking
+            // 3. Sort characters by initiative, with random tie-breaking
             initiativeRolls.sort((a, b) => {
                 if (b.finalInitiative === a.finalInitiative) {
                     tieOccurred = true;
@@ -2023,20 +2029,80 @@
                 return b.finalInitiative - a.finalInitiative;
             });
 
-            // 3. Re-order the elements in the DOM
+            // 4. Perform DOM re-ordering
+            const turnMarker = shelf.querySelector('[id^="turn-marker-"]');
+            if (turnMarker) {
+                // Prepend the turn marker if it exists, and reset its turn counter
+                const counter = turnMarker.querySelector('.turn-counter');
+                if (counter) counter.textContent = '1';
+                shelf.prepend(turnMarker);
+            }
+            // Append sorted characters to the shelf, implicitly reordering them
             initiativeRolls.forEach(item => {
                 shelf.appendChild(item.element);
             });
 
-            // 4. Reset the turn marker and move it to the top
-            const turnMarker = shelf.querySelector('[id^="turn-marker-"]');
-            if (turnMarker) {
-                const counter = turnMarker.querySelector('.turn-counter');
-                if(counter) counter.textContent = '1';
-                shelf.prepend(turnMarker);
-            }
+            // 5. Invert and Play (Animate all items to their new positions)
+            let completedAnimations = 0;
+            const totalItemsToAnimate = allShelfItems.length;
+            const animationDuration = 300; // General animation duration
+            const staggerDelay = 20; // Delay per item for stagger effect
 
-            // 5. Build and display the log message
+            const onAnimationComplete = () => {
+                completedAnimations++;
+                if (completedAnimations === totalItemsToAnimate) {
+                    // All items have finished animating, clean up styles
+                    allShelfItems.forEach(item => {
+                        item.style.transition = '';
+                        item.style.transform = '';
+                    });
+                    console.log("Roll Initiatives animation complete and styles cleaned up.");
+                }
+            };
+
+            allShelfItems.forEach((item, index) => {
+                const currentRect = item.getBoundingClientRect();
+                const initialRect = initialRects.get(item.id);
+
+                // Only animate if the item was present before reordering and its position changed
+                if (initialRect && (initialRect.left !== currentRect.left || initialRect.top !== currentRect.top)) {
+                    const deltaX = initialRect.left - currentRect.left;
+                    const deltaY = initialRect.top - currentRect.top;
+
+                    // Apply the inverse transform instantly
+                    item.style.transition = 'none';
+                    item.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+
+                    // Force a reflow
+                    item.offsetHeight;
+
+                    // Animate to the final position with stagger
+                    const delay = index * staggerDelay;
+                    item.style.transition = `transform ${animationDuration}ms ease ${delay}ms`;
+                    item.style.transform = ''; // Animate back to original (untransformed) state
+
+                    // Attach the listener for animation completion
+                    item.addEventListener('transitionend', onAnimationComplete, { once: true });
+                } else {
+                    // If the item didn't move or wasn't initially tracked, count it as "completed"
+                    completedAnimations++;
+                }
+            });
+
+            // Fallback for cleanup in case 'transitionend' doesn't fire for all elements
+            // This is especially important if some elements aren't visually moving
+            // or if the page loses focus.
+            setTimeout(() => {
+                if (completedAnimations < totalItemsToAnimate) {
+                    console.warn("Roll Initiatives: Fallback animation cleanup triggered. Some transitionend events might have been missed.");
+                    allShelfItems.forEach(item => {
+                        item.style.transition = '';
+                        item.style.transform = '';
+                    });
+                }
+            }, animationDuration + (totalItemsToAnimate * staggerDelay) + 100); // Max possible animation time + buffer
+
+            // 6. Build and display the log message
             let logMessage = '<strong>--- Initiative Rolls ---</strong><ul>';
             initiativeRolls.forEach(item => {
                 logMessage += `<li>${item.log}</li>`;
@@ -2048,12 +2114,12 @@
             
             addLogEntry(logMessage, true);
 
-            // 6. Ensure the log is visible
+            // 7. Ensure the log is visible
             if (!document.body.classList.contains('log-open')) {
                 logHandle.click();
             }
             
-            // 7. Save the new state
+            // 8. Save the new state
             await saveState();
         }
 
