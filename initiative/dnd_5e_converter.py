@@ -320,8 +320,8 @@ def convert_monster_data(input_json_path, output_json_path):
             # Ensure HP is an integer for totalHp
             hp_value = int(monster.get('hit_points', 0))
             
-            # Get CR for appending to name
-            cr = monster.get('challenge_rating', 'N/A')
+            # Get CR for the challenge field
+            cr = monster.get('challenge_rating', '0')
             
             # Calculate initiative bonus from Dexterity
             dex_score = monster.get('dexterity', 10) # Default to 10 (modifier of 0) if missing
@@ -335,7 +335,7 @@ def convert_monster_data(input_json_path, output_json_path):
                 "totalHp": str(hp_value),
                 "initiativeBonus": initiative_bonus,
                 "version": "dnd_5e",
-                "challenge": f"CR {cr}",
+                "challenge": str(cr),
                 "notes": format_monster_notes(monster)
             }
 
