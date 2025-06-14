@@ -1323,66 +1323,86 @@
                     }
                 }
                 item.dataset.originalParentId = item.parentElement.id;
+                // Store the next sibling ID for re-insertion, if necessary
                 item.dataset.originalNextSiblingId = item.nextSibling ? item.nextSibling.id : 'null';
                 setTimeout(() => item.classList.add('dragging'), 0);
             });
 
-            item.addEventListener('dragend', (e) => {
+            item.addEventListener('dragend', async (e) => { // Marked as async for await calls
                 item.classList.remove('dragging');
                 const originalParentId = item.dataset.originalParentId;
                 if (!originalParentId) return;
 
-                const newParent = item.parentElement;
+                const newParent = item.parentElement; // This is the DOM element where the drag ended
 
-                if (newParent && originalParentId !== newParent.id && item.id.startsWith('char-')) {
-                    // This is a COPY operation between different containers.
-                    const characterToCopy = Character.fromElement(item);
+                const isCrossContainerDrag = (newParent && originalParentId !== newParent.id);
+                const isCharacterCard = item.id.startsWith('char-');
 
+                if (isCrossContainerDrag && isCharacterCard) {
+                    const characterToCopy = Character.fromElement(item); // Get original character data
                     if (characterToCopy) {
-                        // position to determine where the new copy should be inserted.
-                        const insertBeforeSibling = item.nextElementSibling;
-
-                        // Create the new copy at the correct drop position.
                         const exactCopyData = characterToCopy.toJSON();
+                        
+                        // Create a NEW character element and object in the target parent.
+                        // We explicitly pass true for skip_save, because the overall saveState()
+                        // at the end of dragend will handle saving the order.
                         createCharacter({
                             ...exactCopyData,
                             parent: newParent,
-                            insertBeforeSibling: insertBeforeSibling // Pass the insertion point
-                        });
-                    }
+                            insertBeforeSibling: item.nextElementSibling // Use item's current position for insertion hint
+                        }, true); // Pass true to skip_save: important to prevent premature saves and re-renders
 
-                    // After copying, we must restore the original element that the browser moved.
-                    const originalParentEl = document.getElementById(originalParentId);
-                    const originalNextSiblingEl = (item.dataset.originalNextSiblingId && item.dataset.originalNextSiblingId !== 'null') ? document.getElementById(item.dataset.originalNextSiblingId) : null;
-                    
-                    if (originalParentEl) {
-                        // Reset inline styles to prevent layout issues.
-                        item.style.position = '';
-                        item.style.top = '';
-                        item.style.left = '';
-                        item.style.transform = '';
-                        item.style.zIndex = '';
-                        
-                        if (originalNextSiblingEl) {
-                            originalParentEl.insertBefore(item, originalNextSiblingEl);
-                        } else {
-                            originalParentEl.appendChild(item);
+                        // Now, determine if the original item should be removed or restored
+                        if (originalParentId === 'shelf-items') {
+                            // Scenario: Dragging from Initiative (shelf) to Compendium (MOVE)
+                            // The original item should be removed from the initiative shelf and its data deleted.
+                            await deleteCharacterFromIndexedDB(item.id); // Delete character data from DB
+                            characterRegistry.delete(item.id); // Remove from in-memory registry
+                            item.remove(); // Remove the original DOM element from its previous parent
+                        } else if (originalParentId === 'compendium-shelf-inner') {
+                            // Scenario: Dragging from Compendium to Initiative (COPY)
+                            // The original item should remain in the compendium.
+                            // The browser's native drag-and-drop might visually move the element,
+                            // so we explicitly ensure it's returned to its original place in the DOM.
+                            const originalParentEl = document.getElementById(originalParentId);
+                            const originalNextSiblingId = item.dataset.originalNextSiblingId;
+                            const originalNextSiblingEl = (originalNextSiblingId && originalNextSiblingId !== 'null') ? document.getElementById(originalNextSiblingId) : null;
+                            if (originalParentEl) {
+                                // Clear any inline styles set by the drag operation
+                                item.style.position = '';
+                                item.style.top = '';
+                                item.style.left = '';
+                                item.style.transform = '';
+                                item.style.zIndex = '';
+                                // Re-insert the original item back into its source container
+                                if (originalNextSiblingEl) {
+                                    originalParentEl.insertBefore(item, originalNextSiblingEl);
+                                } else {
+                                    originalParentEl.appendChild(item);
+                                }
+                            }
                         }
                     }
-                    
-                } else {
-                    // This was a RE-ORDER operation within the same container. Just save the state.
-                    saveState();
+                } else if (!isCrossContainerDrag && isCharacterCard) {
+                    // This is an intra-container re-order. The DOM is already updated by dragover.
+                    // No need to create new characters or remove old ones.
+                    // The final saveState() will capture the new order.
                 }
 
+                // Clean up temporary dataset attributes regardless of drag type.
                 delete item.dataset.originalParentId;
                 delete item.dataset.originalNextSiblingId;
 
+                // Refresh compendium layout if any compendium operation occurred, to re-stack cards.
                 if (newParent?.id.includes('compendium') || originalParentId.includes('compendium')) {
                     refreshCompendiumLayout();
                 }
+                
+                // A single, final save of the entire state after all DOM manipulations are complete.
+                await saveState();
             });
         }
+
 
         function initializeSelectable(item) {
             if (!item.classList.contains('character-card')) return;
