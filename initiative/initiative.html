@@ -359,18 +359,30 @@
 
             <!-- Button Container -->
             <div id="main-button-container" class="mt-8 text-center space-y-4">
+                <!-- Centered "Roll Initiatives!" button -->
+                <div>
+                    <button id="roll-initiatives-btn" class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold py-4 px-8 rounded-lg shadow-xl hover:shadow-2xl focus:outline-none focus:ring-4 focus:ring-indigo-300 transition-all duration-300 transform hover:-translate-y-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 inline-block mr-2 -mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Roll Initiatives!
+                    </button>
+                </div>
+
+                <!-- Main action buttons -->
                 <div class="space-x-4">
                     <button id="move-item-btn" class="bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-300 transition-all duration-200">
                         Next Turn (SPACE)
                     </button>
-                     <button id="last-turn-btn" class="bg-amber-500 text-white font-bold py-3 px-6 rounded-lg shadow-md hover:bg-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-300 transition-all duration-200">
+                    <button id="last-turn-btn" class="bg-amber-500 text-white font-bold py-3 px-6 rounded-lg shadow-md hover:bg-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-300 transition-all duration-200">
                         Last Turn (BACKSPACE)
                     </button>
                     <button id="add-item-btn" class="bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-300 transition-all duration-200">
                         Add Character (A)
                     </button>
                 </div>
-                <!-- Second row of buttons for actions on highlighted items -->
+
+                <!-- Contextual action buttons -->
                 <div id="action-buttons" class="space-x-4">
                     <button id="remove-btn" class="bg-gray-400 text-white font-bold py-2 px-5 rounded-lg shadow-md transition-all duration-200 cursor-not-allowed opacity-50" disabled>
                         Remove (DELETE)
@@ -388,8 +400,9 @@
                         Notes (N)
                     </button>
                 </div>
-                <!-- New row for clear all data and other toggle buttons -->
-                <div class="mt-4 space-x-4">
+                
+                <!-- Utility buttons -->
+                <div class="space-x-4">
                     <button id="hide-hp-btn" class="bg-gray-600 text-white font-bold py-2 px-5 rounded-lg shadow-md hover:bg-gray-700 focus:outline-none focus:ring-4 focus:ring-gray-300 transition-all duration-200">
                         Hide HP
                     </button>
@@ -497,6 +510,7 @@
     <!-- JavaScript Logic -->
     <script>
         // Get the buttons and containers
+        const rollInitiativesButton = document.getElementById('roll-initiatives-btn');
         const lastTurnButton = document.getElementById('last-turn-btn');
         const moveButton = document.getElementById('move-item-btn');
         const addButton = document.getElementById('add-item-btn');
@@ -1750,6 +1764,83 @@
             return turnMarker; // Return the created turn marker
         }
 
+        /**
+         * Rolls initiative for all characters on the main shelf, sorts them,
+         * and logs the results.
+         */
+        async function rollInitiatives() {
+            const charactersOnShelf = Array.from(shelf.querySelectorAll('.character-card'));
+            if (charactersOnShelf.length === 0) {
+                addLogEntry("No characters in initiative to roll for.");
+                return;
+            }
+
+            let initiativeRolls = [];
+            let tieOccurred = false;
+
+            // 1. Roll initiative for each character
+            for (const charElement of charactersOnShelf) {
+                const character = Character.fromElement(charElement);
+                if (character) {
+                    const bonus = parseInt(character.initiativeBonus, 10) || 0;
+                    const roll = Math.floor(Math.random() * 20) + 1;
+                    character.initiative = roll + bonus;
+                    
+                    // Store details for logging and sorting
+                    initiativeRolls.push({ 
+                        element: charElement, 
+                        character: character,
+                        finalInitiative: character.initiative,
+                        log: `<strong>${character.name}</strong> rolled ${character.initiative} (d20: ${roll} + bonus: ${bonus})`
+                    });
+                    
+                    await character.render(); // Update the card display
+                }
+            }
+
+            // 2. Sort characters by initiative, with random tie-breaking
+            initiativeRolls.sort((a, b) => {
+                if (b.finalInitiative === a.finalInitiative) {
+                    tieOccurred = true;
+                    return Math.random() - 0.5; // Randomly sort ties
+                }
+                return b.finalInitiative - a.finalInitiative;
+            });
+
+            // 3. Re-order the elements in the DOM
+            initiativeRolls.forEach(item => {
+                shelf.appendChild(item.element);
+            });
+
+            // 4. Reset the turn marker and move it to the top
+            const turnMarker = shelf.querySelector('[id^="turn-marker-"]');
+            if (turnMarker) {
+                const counter = turnMarker.querySelector('.turn-counter');
+                if(counter) counter.textContent = '1';
+                shelf.prepend(turnMarker);
+            }
+
+            // 5. Build and display the log message
+            let logMessage = '<strong>--- Initiative Rolls ---</strong><ul>';
+            initiativeRolls.forEach(item => {
+                logMessage += `<li>${item.log}</li>`;
+            });
+            logMessage += '</ul>';
+            if (tieOccurred) {
+                logMessage += '<span class="text-gray-400">(Ties were resolved randomly.)</span>';
+            }
+            
+            addLogEntry(logMessage, true);
+
+            // 6. Ensure the log is visible
+            if (!document.body.classList.contains('log-open')) {
+                logHandle.click();
+            }
+            
+            // 7. Save the new state
+            await saveState();
+        }
+
         // --- Modal & Menu Logic ---
         function populateSymbolModal(selectedItems) {
             symbolGrid.innerHTML = '';
@@ -2148,6 +2239,7 @@
 
 
         // --- Button & Keyboard Logic ---
+        rollInitiativesButton.addEventListener('click', rollInitiatives);
         lastTurnButton.addEventListener('click', () => {
             const lastItem = shelf.querySelector('.draggable:last-child');
             if(lastItem) {
@@ -2570,11 +2662,11 @@
 
             createTurnMarker(null, '1', true);
 
-            createCharacter({ name: 'Goblin 1', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl }, true);
-            createCharacter({ name: 'Goblin 2', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl }, true);
-            createCharacter({ name: 'Goblin 3', hp: 4, totalHp: 7, statuses: ['❤️‍🩹'], notes: goblinNotes, bgImageKey: goblinImageUrl }, true);
-            createCharacter({ name: 'Hector the Well-Endowed', hp: 18, totalHp: 18, statuses: ['⚡️'], bgImageKey: hectorImageUrl }, true);
-            createCharacter({ name: 'Goblin', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, parent: compendiumShelfInner }, true);
+            createCharacter({ name: 'Goblin 1', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 16 }, true);
+            createCharacter({ name: 'Goblin 2', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 14 }, true);
+            createCharacter({ name: 'Goblin 3', hp: 4, totalHp: 7, statuses: ['❤️‍🩹'], notes: goblinNotes, bgImageKey: goblinImageUrl, initiativeBonus: 2, initiative: 9 }, true);
+            createCharacter({ name: 'Hector the Well-Endowed', hp: 18, totalHp: 18, statuses: ['⚡️'], bgImageKey: hectorImageUrl, initiativeBonus: -1, initiative: 5 }, true);
+            createCharacter({ name: 'Goblin', hp: 7, totalHp: 7, notes: goblinNotes, bgImageKey: goblinImageUrl, parent: compendiumShelfInner, initiativeBonus: 2 }, true);
             
             addLogEntry("Welcome to the Initiative Tracker! (hint, try typing /roll 1d20, or /roll 2d20kh1 for advantage)");
 
